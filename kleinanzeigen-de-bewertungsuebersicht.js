@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @connect      www.kleinanzeigen.de
 // @run-at       document-end
+// @license      GPL-3.0-or-later
 // ==/UserScript==
 
 (function() {
