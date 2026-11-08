@@ -1,0 +1,12 @@
+{
+  "name": "kleinanzeigen-de-bewertungsuebersicht",
+  "version": "4.0.0",
+  "private": true,
+  "description": "Tampermonkey-Skript: Verkäufer-Bewertungen in den Kleinanzeigen-Suchergebnissen",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^26.0.0"
+  }
+}
