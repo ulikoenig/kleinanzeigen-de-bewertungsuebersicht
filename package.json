@@ -4,7 +4,13 @@
   "private": true,
   "description": "Tampermonkey-Skript: Verkäufer-Bewertungen in den Kleinanzeigen-Suchergebnissen",
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "build": "node build.js",
+    "check": "node build.js --check",
+    "lint": "eslint .",
+    "pretest": "node build.js --check",
+    "test": "npm run test:ableitung && npm run test:quelle",
+    "test:ableitung": "node --test test/*.test.js",
+    "test:quelle": "KBS_VARIANT=quelle node --test test/*.test.js"
   },
   "devDependencies": {
     "jsdom": "^26.0.0"

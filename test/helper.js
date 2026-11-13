@@ -6,7 +6,18 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
-const SCRIPT = path.join(ROOT, 'kleinanzeigen-de-bewertungsuebersicht.user.js');
+const SCRIPT_ABLEITUNG = path.join(ROOT, 'kleinanzeigen-de-bewertungsuebersicht.user.js');
+const SCRIPT_QUELLE = path.join(ROOT, 'kleinanzeigen-de-bewertungsuebersicht.js');
+
+// Welche Ausprägung geprüft wird: standardmäßig die installierbare Datei, mit
+// KBS_VARIANT=quelle (oder opts.variante) die gepflegte Quelle selbst. So läuft
+// dieselbe Suite gegen beide Dateien, statt nur gegen eine.
+function skriptPfad(opts) {
+    const variante = (opts && opts.variante) || process.env.KBS_VARIANT || 'ableitung';
+    if (variante === 'quelle') return SCRIPT_QUELLE;
+    if (variante === 'ableitung') return SCRIPT_ABLEITUNG;
+    throw new Error('unbekannte Ausprägung: ' + variante);
+}
 const FIXTURES = path.join(__dirname, 'fixtures');
 
 const LISTING_URL = 'https://www.kleinanzeigen.de/s-fahrraeder/fahrrad/k0c217';
@@ -67,7 +78,7 @@ function loadWindow(html, opts = {}) {
     }
 
     geoeffnete.push(dom);
-    win.eval(fs.readFileSync(SCRIPT, 'utf8'));
+    win.eval(fs.readFileSync(skriptPfad(opts), 'utf8'));
     if (!win.kbsDebug) throw new Error('window.kbsDebug fehlt – Skript bricht ab');
     if (!win.kbsDebug.config) {
         throw new Error('window.kbsDebug.config fehlt – Testbetrieb kann die ' +
@@ -82,4 +93,7 @@ async function runProcessAll(win, force) {
     await win.kbsDebug.processAll(force);
 }
 
-module.exports = { loadWindow, fixture, LISTING_URL, runProcessAll, SCRIPT, TEST_CONFIG, schliessen, mem: w => w.kbsMem };
+module.exports = {
+    loadWindow, fixture, LISTING_URL, runProcessAll, TEST_CONFIG, schliessen, skriptPfad,
+    SCRIPT: SCRIPT_ABLEITUNG, SCRIPT_ABLEITUNG, SCRIPT_QUELLE, mem: w => w.kbsMem
+};
