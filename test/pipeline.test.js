@@ -2,33 +2,34 @@
 // Prüft Abarbeitung: ein Request pro Karte, Cache, Tageszähler,
 // Fehlerpfad (404), Bot-Gegenwehr (403 -> Cooldown + Stopp), manueller Retry.
 const test = require('node:test');
-const { after } = test;
+const { after, afterEach } = test;
 const assert = require('node:assert/strict');
 const { loadWindow, fixture, runProcessAll, mem } = require('./helper');
 
 // Ausgefädelte jsdom-Fenster schließen, sonst hält ein offener Nachlauf-Timer
 // den Testprozess fest (siehe test/helper.js).
+afterEach(require('./helper').schliessen);
 after(require('./helper').schliessen);
 
 test('Nach Cooldown-Ablauf arbeitet das Skript selbst weiter, ein ausdrücklicher Stopp nicht', async () => {
     const win = loadWindow(fixture('listing.html'), {
-        config: { COOLDOWN_MINUTES: 0.05 },          // 3 Sekunden Sperpause
+        config: { COOLDOWN_MINUTES: 0.03 },          // 1,8 Sekunden Sperrpause
         respond: responder(403)
     });
     await runProcessAll(win, false);
     const nachDerSperre = win.requests.length;
     assert.ok(nachDerSperre >= 1 && nachDerSperre <= 2, 'Sperre nach einer Anfrage pro Worker');
 
-    await new Promise(r => setTimeout(r, 4200));      // Ablauf abwarten, kein Neuladen
+    await new Promise(r => setTimeout(r, 2400));      // Ablauf abwarten, kein Neuladen
     assert.ok(win.requests.length > nachDerSperre, 'automatischer Lauf nach Cooldown-Ende');
 
     const win2 = loadWindow(fixture('listing.html'), {
-        config: { COOLDOWN_MINUTES: 0.02 }, respond: responder(403)
+        config: { COOLDOWN_MINUTES: 0.01 }, respond: responder(403)
     });
     await runProcessAll(win2, false);
     win2.kbsDebug.stop();                             // ausdrücklicher Stopp
     const gestoppt = win2.requests.length;
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1400));
     assert.equal(win2.requests.length, gestoppt, 'der vorgemerkte Nachlauf ist nach dem Stopp weg');
 });
 

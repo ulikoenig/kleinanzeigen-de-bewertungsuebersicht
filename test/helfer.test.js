@@ -2,12 +2,13 @@
 // Prüft das Testfundament selbst: die Betriebswerte müssen wirklich übergabar
 // sein, sonst laufen Tests still mit Produktionswerten (alte Regex-Variante).
 const test = require('node:test');
-const { after } = test;
+const { after, afterEach } = test;
 const assert = require('node:assert/strict');
 const { loadWindow, fixture, runProcessAll, TEST_CONFIG } = require('./helper');
 
 // Ausgefädelte jsdom-Fenster schließen, sonst hält ein offener Nachlauf-Timer
 // den Testprozess fest (siehe test/helper.js).
+afterEach(require('./helper').schliessen);
 after(require('./helper').schliessen);
 
 test('Testhelfer setzt die Betriebswerte wirklich', async () => {

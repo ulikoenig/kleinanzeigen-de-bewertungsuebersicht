@@ -16,7 +16,13 @@ const LISTING_URL = 'https://www.kleinanzeigen.de/s-fahrraeder/fahrrad/k0c217';
 // Regex wegpatcht - wer die Zeilen umformulierte, bekam einen stillen No-op und
 // damit langsame, flatternde Tests. Heute wird über window.kbsDebug.config
 // gesetzt, und der Helfer bricht ab, wenn diese Übergabe nicht existiert.
-const TEST_CONFIG = { DELAY_MIN: 1, DELAY_MAX: 2, FETCH_TIMEOUT: 900 };
+// Die Rückfall-Pausen sind gegenüber dem Produktionswert (4 s bis 5 min) herabgesetzt,
+// sonst zahlt jede fehlgeschlagene Testkarte vier Sekunden Strafe. Tests, die das
+// Rückfall-Verhalten selbst prüfen, setzen ihre eigenen Werte.
+const TEST_CONFIG = {
+    DELAY_MIN: 1, DELAY_MAX: 2, FETCH_TIMEOUT: 900,
+    BACKOFF_BASE: 1, BACKOFF_MAX: 2, MAX_FAILED_SERIES: 50
+};
 
 // Jede geoeffnete jsdom-Inferenz wird vorgemerkt, damit Tests sie am Ende
 // schliessen koennen - ein offener Nachlauf- oder Cooldown-Timer haelt sonst
