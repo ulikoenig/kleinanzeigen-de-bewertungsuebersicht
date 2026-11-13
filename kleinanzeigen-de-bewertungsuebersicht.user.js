@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kleinanzeigen Verkäufer-Bewertungen in Suchergebnissen anzeigen
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Zeigt in der Suchübersicht Account-Alter und Bewertungen der Nutzer direkt unter den Suchergebnissen an.
 // @author       Uli König
 // @match        https://www.kleinanzeigen.de/*
@@ -19,6 +19,33 @@
 
 /*
  * Änderungsprotokoll
+ * 4.1  Behobene Befunde aus dem Codereview (Auswahl, Aufgaben-IDs in TODO.md):
+ *      - Bewertung sitzt wieder in der Titel-/Preisspalte (zuvor 27/27 Karten in
+ *        der Bildspalte, weil beide Spalten basis-*-Klassen tragen).
+ *      - Abarbeitung hält Ausnahmen aus: kein hängender running-Schalter mehr,
+ *        Fehler pro Karte gezählt (stats.error), Lauf läuft danach weiter.
+ *      - Auswertung nur noch im Profil-/Kontaktbereich; frei schreibbarer
+ *        Anzeigentext (#viewad-description, #viewad-title) wird übersprungen -
+ *        ein Verkäufer konnte damit seine eigene Stufe auf „gut“ heben.
+ *      - Tageslimit bremst nur echte Anfragen (gecachte Bewertungen bleiben
+ *        sichtbar), gezählt wird der Versuch statt des Erfolgs, keine
+ *        Überschreitung um CONCURRENCY-1 mehr.
+ *      - Bot-/Captcha-Seite mit Status 200 erkannt (Cooldown wie bei 403) und
+ *        ein Ergebnis ohne Verkäufersignal nicht mehr sieben Tage gecacht.
+ *      - Cache-Einträge prüfen ihre Form und ihre Auslieferungsart
+ *        (Desktop-Profil vs. mobiler Teaser) und werden gebündelt geschrieben.
+ *      - Mobilbetrieb: mobile Auslieferung hat anderes Markup (li.j-adlistitem,
+ *        userprofile-teaser ohne Kontoalter) - Karten, Stufe und Einfügeort
+ *        funktionieren dort jetzt; Bedienung ohne Tastatur über Bedienfeld und
+ *        Menübefehle; gerätabhängige Betriebswerte (CONFIG).
+ *      - Gestaffelte Pause und Abbruch bei wiederholten Netzfehlern;
+ *        automatischer Weiterlauf nach Cooldown-Ende; eigene DOM-Einfügungen
+ *        triggern den Beobachter nicht mehr.
+ *      - Stufe zusätzlich als Symbol + Wort lesbar; Datumsauswertung gehärtet
+ *        (31.02.2024, Zukunftsdaten), Anzeige mit Erhebungszeitpunkt und
+ *        Wiederverwendungsdauer; Debug-Zugang nur nach bewusster Freigabe.
+ *      - Eine Quelle (.js) statt zwei von Hand gepflegter Dateien; npm test läuft
+ *        gegen beide Ausprägungen; ESLint und GitHub-Actions-Prüfung; GPL-Volltext.
  * 4.0  Anpassung an das neue Astro-/Tailwind-Frontend der Suchseite (2026):
  *      - Karten sind nicht mehr ".aditem", sondern ul#srchrslt-adtable >
  *        li[data-clickable="card"] > article[data-adid][data-href].

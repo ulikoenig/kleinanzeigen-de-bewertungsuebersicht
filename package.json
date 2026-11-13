@@ -1,6 +1,6 @@
 {
   "name": "kleinanzeigen-de-bewertungsuebersicht",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "description": "Tampermonkey-Skript: Verkäufer-Bewertungen in den Kleinanzeigen-Suchergebnissen",
   "scripts": {
