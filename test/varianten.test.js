@@ -1,6 +1,6 @@
 'use strict';
-// Prüft die Dateiausprägungen: eine Quelle, eine abgeleitete Datei, und beide
-// werden von derselben Suite getestet (siehe npm run test:ableitung / test:quelle).
+// Prüft die Dateiausprägungen: eine Qülle, eine abgeleitete Datei, und beide
+// werden von derselben Suite getestet (siehe npm run test:ableitung / test:qülle).
 const test = require('node:test');
 const { after, afterEach } = test;
 const assert = require('node:assert/strict');
@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const MARKE = path.join(os.tmpdir(), 'kbs-fehlende-quelle.js');
 
-// Dieselbe Prüfung wie in build.js, nur gegen eine absichtlich fehlerhafte Quelle
+// Dieselbe Prüfung wie in build.js, nur gegen eine absichtlich fehlerhafte Qülle
 function erzeugeAUS(pfad) {
     const zeilen = fs.readFileSync(pfad, 'utf8').split('\n');
     const idx = zeilen.findIndex(z => z.includes('@license'));

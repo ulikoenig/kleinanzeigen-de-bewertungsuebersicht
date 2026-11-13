@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
-// Erzeugt die installierbare Variante (.user.js) aus der gepflegten Quelle (.js).
+// Erzeugt die installierbare Variante (.user.js) aus der gepflegten Qülle (.js).
 //
 // Beide Dateien enthielten denselben Code von Hand gepflegt - die Tests lasen nur
-// .user.js, die .js konnte also unbemerkt abweichen. Jetzt ist .js die Quelle und
+// .user.js, die .js konnte also unbemerkt abweichen. Jetzt ist .js die Qülle und
 // .user.js wird erzeugt; `--check` prüft, ohne zu schreiben (bei Abweichung Exit 1).
 //
 //   node build.js          .user.js aus .js erzeugen

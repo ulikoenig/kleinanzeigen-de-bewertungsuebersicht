@@ -7,9 +7,9 @@
 // @match        https://www.kleinanzeigen.de/*
 // @run-at       document-idle
 // @noframes
-// @grant        GM_xmlhttpRequest
-// @grant        GM_setValue
-// @grant        GM_getValue
+// @grant        GM_xmlhttpReqüst
+// @grant        GM_setValü
+// @grant        GM_getValü
 // @grant        GM_registerMenuCommand
 // @connect      www.kleinanzeigen.de
 // @license      GPL-3.0-or-later
@@ -41,8 +41,8 @@
  *        triggern den Beobachter nicht mehr.
  *      - Stufe zusätzlich als Symbol + Wort lesbar; Datumsauswertung gehärtet
  *        (31.02.2024, Zukunftsdaten), Anzeige mit Erhebungszeitpunkt und
- *        Wiederverwendungsdauer; Debug-Zugang nur nach bewusster Freigabe.
- *      - Eine Quelle (.js) statt zwei von Hand gepflegter Dateien; npm test läuft
+ *        Wiederverwendungsdaür; Debug-Zugang nur nach bewusster Freigabe.
+ *      - Eine Qülle (.js) statt zwei von Hand gepflegter Dateien; npm test läuft
  *        gegen beide Ausprägungen; ESLint und GitHub-Actions-Prüfung; GPL-Volltext.
  * 4.0  Anpassung an das neue Astro-/Tailwind-Frontend der Suchseite (2026):
  *      - Karten sind nicht mehr ".aditem", sondern ul#srchrslt-adtable >
@@ -75,15 +75,15 @@
         BACKOFF_BASE: 4000,      // ms: erste Pause nach einem Netzfehler
         BACKOFF_MAX: 300000,     // ms: oberste Grenze der gestaffelten Pause
         MAX_FAILED_SERIES: 5,    // so viele Fehlschläge hintereinander, dann Abbruch
-        CACHE_TTL_INCOMPLETE_HOURS: 24 // unvollstaendiger Auszug (z. B. mobil ohne
-                                       // Kontoalter) wird deutlich kuerzer gehalten
+        CACHE_TTL_INCOMPLETE_HOURS: 24 // unvollständiger Auszug (z. B. mobil ohne
+                                       // Kontoalter) wird deutlich kürzer gehalten
     };
 
     const NS = 'kbs_v4_';
     const PREFIX = '[Verkäufer-Checker]';
 
     // Karten: neue Astro-Oberfläche (Desktop), mobile Auslieferung, dann alte
-    // (Vue-)Oberfläche. Die mobile Seite liefert anderes Markup: sie nutzt
+    // (Vü-)Oberfläche. Die mobile Seite liefert anderes Markup: sie nutzt
     // ul#srp-results > li.j-adlistitem ohne article[data-adid] und ohne
     // #srchrslt-adtable (gemessen 2026-02 an einer Android-Auslieferung).
     const CARD_SELECTOR = [
@@ -142,7 +142,7 @@
         return cachePuffer;
     }
 
-    function cacheSaeubern(c) {
+    function cacheAusmisten(c) {
         const cutoff = Date.now() - CONFIG.CACHE_TTL_DAYS * 864e5;
         for (const id of Object.keys(c)) {
             if (!c[id] || (c[id].ts || 0) < cutoff) delete c[id];
@@ -152,7 +152,7 @@
     function putCache(k, v) {
         const c = getCache();
         c[k] = v;
-        cacheSaeubern(c);
+        cacheAusmisten(c);
         cacheSchmutzig = true;
         cacheSeitSchreiben++;
         // Zwischendurch schreiben, damit ein abgebrochener Lauf nicht alles
@@ -255,7 +255,7 @@
     }
 
     // Ein Element, das innerhalb einer Verkäufer-Textzone liegt, ist ebenso
-    // unvertrauenswuerdig - auch wenn der Rahmen selbst in Ordnung ist.
+    // unvertraünswürdig - auch wenn der Rahmen selbst in Ordnung ist.
     function insideSellerZone(scope, el) {
         if (!el) return false;
         for (const zone of scope.querySelectorAll(SELLER_TEXT_SELECTOR)) {
@@ -264,10 +264,10 @@
         return false;
     }
 
-    // Vertrauenswuerdiger Rahmen der Auswertung: ausschliesslich der
+    // Vertraünswürdiger Rahmen der Auswertung: ausschliesslich der
     // systemseitige Profil-/Kontaktbereich (gemessen an echten Detailseiten: Name,
     // Nutzer-Typ, “Aktiv seit”, Abzeichen und userId-Link liegen alle darin).
-    // Kein Rueckfall auf document.body - damit lesen die Text-Fallbacks niemals
+    // Kein Rückfall auf document.body - damit lesen die Text-Fallbacks niemals
     // den Anzeigentext, in dem der Verkäufer behaupten kann, was er will.
     function profileScope(doc) {
         const candidates = [
@@ -312,8 +312,8 @@
 
         const scope = profileScope(doc);
         if (!scope) {
-            // Nichts Vertrauenswuerdiges auf der Seite: lieber “unbekannt” als
-            // irgendetwas aus dem Anzeigentext zu uebernehmen.
+            // Nichts Vertraünswürdiges auf der Seite: lieber “unbekannt” als
+            // irgendetwas aus dem Anzeigentext zu übernehmen.
             d.rating = computeRating(d);
             return d;
         }
@@ -378,7 +378,7 @@
             });
         }
 
-        // Zufriedenheit, falls kein Badge-Container gefunden wurde. Zuerst das Muster
+        // Zufriedenheit, falls kein Badge-Container gefunden wurde. Zürst das Muster
         // der mobilen Auslieferung (“Zufriedenheit: TOP” im userprofile-teaser), dann
         // die Badge-Formulierungen der Desktop-Seite.
         if (d.satisfaction === 'fehlt') {
@@ -438,13 +438,13 @@
 
     // Auslieferungsart einer Karte: Desktop-Markup (Profilbereich mit Kontoalter) oder
     // mobile Auslieferung (Teaser ohne Kontoalter). Bestimmt, welcher Cache-Auszug
-    // dafuer ueberhaupt in Frage kommt.
+    // dafür überhaupt in Frage kommt.
     function deliveryVariant(card) {
         return (card.matches && card.matches('li.j-adlistitem')) ? 'teaser' : 'profil';
     }
 
-    // Formpruefung eines Cache-Eintrags: ein Eintrag, den wir nicht darstellen
-    // koennen, wuerde bei jedem Treffer erneut werfen und die Karte dauerhaft offen
+    // Formprüfung eines Cache-Eintrags: ein Eintrag, den wir nicht darstellen
+    // können, würde bei jedem Treffer erneut werfen und die Karte dauerhaft offen
     // lassen. Alte/beschädigte Einträge werden deshalb verworfen - die Karte wird
     // dann ganz normal neu geladen.
     function isUsableEntry(entry) {
@@ -453,7 +453,7 @@
             typeof d.rating === 'string');
     }
 
-    // Verwertbarer Cache-Treffer fuer diese Karte, oder null.
+    // Verwertbarer Cache-Treffer für diese Karte, oder null.
     function cacheHit(adId, card) {
         const cache = getCache();
         const hit = cache[adId];
@@ -469,7 +469,7 @@
             ? CONFIG.CACHE_TTL_DAYS * 864e5
             : CONFIG.CACHE_TTL_INCOMPLETE_HOURS * 3600e3;
         if ((Date.now() - (hit.ts || 0)) >= erlaubt) return null;
-        // Ein unvollstaendiger Auszug taugt nur fuer die Auslieferungsart, die ihn
+        // Ein unvollständiger Auszug taugt nur für die Auslieferungsart, die ihn
         // erzeugt hat: sonst zeigt ein Desktop-Lauf wegen einer mobilen
         // Teilinformation sieben Tage lang “Kontoalter unbekannt”, obwohl es die
         // Daten gäbe.
@@ -533,9 +533,9 @@
     }
 
     // Bot-Gegenwehr antwortet gelegentlich mit Status 200 und einer Hinweis-/Captcha-
-    // Seite. Erkennung nur, wenn die Seite keinerlei Profil-Container enthaelt: damit
+    // Seite. Erkennung nur, wenn die Seite keinerlei Profil-Container enthält: damit
     // eine Anzeige, in deren Titel ein solcher Block-Begriff steht (z. B. ein
-    // „Roboter“-Staubsauger), nicht fälschlich einen Cooldown ausloest.
+    // „Roboter“-Staubsauger), nicht fälschlich einen Cooldown auslöst.
     function looksLikeBlockPage(doc) {
         if (doc.querySelector('#viewad-profile-box, #viewad-contact, [class*="userprofile"], .userbadge'))
             return false;
@@ -625,8 +625,8 @@
     let statusTimer = null;
 
     // Eine Sperung (Cooldown, Tageslimit) ist wichtiger als eine Statistikmeldung:
-    // sie bleibt stehen, und kein abgelaufener Timer einer aelteren Meldung darf sie
-    // loeschen. Deshalb traegt jede Meldung jetzt ihre Anzeigedauer selbst.
+    // sie bleibt stehen, und kein abgelaufener Timer einer älteren Meldung darf sie
+    // löschen. Deshalb trägt jede Meldung jetzt ihre Anzeigedauer selbst.
     function setStatus(msg, bleibt) {
         if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
         if (!msg) {
@@ -695,7 +695,7 @@
     function cardInfoHost(card) {
         // Neue Oberfläche: die Spalte mit Titel/Preis, niemals die Bildspalte.
         // Achtung: beide Spalten tragen `basis-*`-Klassen (gemessen an einer echten
-        // Suchseite: 27/27 Karten), die Bildspalte steht zuerst – ein pauschales
+        // Suchseite: 27/27 Karten), die Bildspalte steht zürst – ein pauschales
         // /basis-/ Muster erwischt also immer das Thumbnail.
         const article = artikelElement(card);
         if (article) {
@@ -846,7 +846,7 @@
     const jitter = () => CONFIG.DELAY_MIN + Math.random() * (CONFIG.DELAY_MAX - CONFIG.DELAY_MIN);
 
     // Vollständiges, gefahrlos renderbares Ergebnis für eine nicht auswertbare
-    // Karte. Ein handgeschriebenes Teillobject wuerde in renderBadge erneut werfen.
+    // Karte. Ein handgeschriebenes Teillobject würde in renderBadge erneut werfen.
     function failedData(status) {
         return {
             name: '', userId: '', type: '', variant: '', activeDays: null, activeSince: null,
@@ -941,10 +941,10 @@
         return data.failed ? 'soft' : 'ok';
     }
 
-    // Mobilgeraete liefern eine schmalere Karte, haengen oft an Funkverbindungen und
+    // Mobilgeräte liefern eine schmalere Karte, hängen oft an Funkverbindungen und
     // haben keine Tastatur. Deshalb dort: ein Request gleichzeitig, kleineres
-    // Tageskontingent, laengere Pausen. Die Zahlen sind bewusst konservativ gewaehlt,
-    // weil der Geraetbefund (T45) noch aussteht; ueber "Zuruecksetzen" sind sie
+    // Tageskontingent, längere Pausen. Die Zahlen sind bewusst konservativ gewählt,
+    // weil der Gerätbefund (T45) noch aussteht; über "Zurücksetzen" sind sie
     // im Betrieb wieder einfangbar.
     function mobilerBetrieb() {
         try {
@@ -1079,7 +1079,7 @@
         if (abbruchGrund) {
             setStatus(abbruchGrund + ' | ' + fertig, true);
         } else if (stats.blocked > 0 || spater > Date.now()) {
-            // Die Statistik durfte die Sperung nicht ueberschreiben - beide zusammen.
+            // Die Statistik durfte die Sperung nicht überschreiben - beide zusammen.
             setStatus('Blockiert – Cooldown bis ' + new Date(spater).toLocaleTimeString('de-DE') +
                 '. Ctrl+F8 startet früher. | ' + fertig, true);
         } else {
@@ -1111,8 +1111,8 @@
     function observeDom() {
         let timer = null;
         const obs = new MutationObserver((eintraege) => {
-            // Eigene Einfuegungen (Bewertungszeile, Statusleiste) duerfen den
-            // Beobachter nicht erneut ausloesen - sonst haelt er sich selbst beschaeftigt.
+            // Eigene Einfügungen (Bewertungszeile, Statusleiste) dürfen den
+            // Beobachter nicht erneut auslösen - sonst hält er sich selbst beschäftigt.
             const fremd = eintraege.some(e => Array.from(e.addedNodes).some(n =>
                 n.nodeType === 1 && !(n.closest && n.closest('.kbs-info, #kbs-status')) &&
                 !n.classList.contains('kbs-info')));
@@ -1174,7 +1174,7 @@
 
     if (!window.kbsDebugOnly) {
         gerateEinstellungen();
-        // Der Beobachter laeuft von Anfang an: bei der mobilen Auslieferung erscheinen
+        // Der Beobachter läuft von Anfang an: bei der mobilen Auslieferung erscheinen
         // Karten oft erst nach der Erstenzeichnung, ein starrer Start nach 1,5 s lief
         // dann ins Leere.
         observeDom();

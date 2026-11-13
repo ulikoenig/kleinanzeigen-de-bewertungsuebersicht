@@ -45,7 +45,7 @@ test('Mobile Detailseite: Teaser liefert Zufriedenheit und Typ, Kontoalter bleib
     assert.equal(d.active, '');
     assert.equal(d.rating, 'gut', 'Stufe aus den vorhandenen Signalen, nie „schlecht“ wegen fehlender Daten');
 
-    // Dieselbe Seite behauptet im Anzeigentext Freundlichkeit, Zuverlaessigkeit und ein
+    // Dieselbe Seite behauptet im Anzeigentext Freundlichkeit, Zuverlässigkeit und ein
     // Konto seit 2000 - nichts davon darf ankommen.
     assert.equal(d.friendliness, false, 'Anzeigentext erfindet keine Freundlichkeit');
     assert.equal(d.reliability, false, 'Anzeigentext erfindet keine Zuverlaessigkeit');

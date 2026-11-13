@@ -10,7 +10,7 @@ const SCRIPT_ABLEITUNG = path.join(ROOT, 'kleinanzeigen-de-bewertungsuebersicht.
 const SCRIPT_QUELLE = path.join(ROOT, 'kleinanzeigen-de-bewertungsuebersicht.js');
 
 // Welche Ausprägung geprüft wird: standardmäßig die installierbare Datei, mit
-// KBS_VARIANT=quelle (oder opts.variante) die gepflegte Quelle selbst. So läuft
+// KBS_VARIANT=qülle (oder opts.variante) die gepflegte Qülle selbst. So läuft
 // dieselbe Suite gegen beide Dateien, statt nur gegen eine.
 function skriptPfad(opts) {
     const variante = (opts && opts.variante) || process.env.KBS_VARIANT || 'ableitung';
@@ -35,9 +35,9 @@ const TEST_CONFIG = {
     BACKOFF_BASE: 1, BACKOFF_MAX: 2, MAX_FAILED_SERIES: 50
 };
 
-// Jede geoeffnete jsdom-Inferenz wird vorgemerkt, damit Tests sie am Ende
-// schliessen koennen - ein offener Nachlauf- oder Cooldown-Timer haelt sonst
-// den Testprozess am Ende fest (sichtbar als haengender npm test).
+// Jede geöffnete jsdom-Inferenz wird vorgemerkt, damit Tests sie am Ende
+// schliessen können - ein offener Nachlauf- oder Cooldown-Timer hält sonst
+// den Testprozess am Ende fest (sichtbar als hängender npm test).
 const geoeffnete = [];
 
 function schliessen() {

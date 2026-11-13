@@ -1,6 +1,6 @@
 'use strict';
 // Prüft Abarbeitung: ein Request pro Karte, Cache, Tageszähler,
-// Fehlerpfad (404), Bot-Gegenwehr (403 -> Cooldown + Stopp), manueller Retry.
+// Fehlerpfad (404), Bot-Gegenwehr (403 -> Cooldown + Stopp), manüller Retry.
 const test = require('node:test');
 const { after, afterEach } = test;
 const assert = require('node:assert/strict');
@@ -55,7 +55,7 @@ const todayKey = () => {
         String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 };
 
-// Mehr Karten, als das Fixture hat - fuer Limit-Tests. Jede Kopie bekommt eine
+// Mehr Karten, als das Fixture hat - für Limit-Tests. Jede Kopie bekommt eine
 // eigene Anzeigen-ID, damit der Cache nicht als Doppelbehandlung eingreift.
 function kartenKlon(win, anzahl) {
     const tabelle = win.document.getElementById('srchrslt-adtable');
@@ -184,9 +184,9 @@ test('Detailseite ohne Anzeigenbezug: Skript greift nicht auf der Anzeigenseite'
 
 test('Ausnahme in einer Karte (beschädigter Cache-Eintrag) blockiert nicht den ganzen Lauf', async () => {
     const win = loadWindow(fixture('listing.html'), { respond: responder() });
-    // Ein Eintrag, der der Formpruefung (T46) genuegt, aber beim Rendern wirft:
+    // Ein Eintrag, der der Formprüfung (T46) genügt, aber beim Rendern wirft:
     // ein getter, der kaputte Daten liefert. Damit bleibt der Fall erhalten, dass
-    // eine einzelne Karte eine Ausnahme ausloest.
+    // eine einzelne Karte eine Ausnahme auslöst.
     const kaputt = { rating: 'gut', badges: [], activeDays: null };
     Object.defineProperty(kaputt, 'satisfaction', {
         get() { throw new Error('kaputter Cache-Inhalt'); }
@@ -220,7 +220,7 @@ const BLOCKTITEL_MIT_PROFIL = '<html><head><title>Roboter Staubsauger – kleina
 
 test('Unbrauchbarer Cache-Eintrag wird verworfen und die Karte neu geladen', async () => {
     const win = loadWindow(fixture('listing.html'), { respond: responder() });
-    // Ein Eintrag von vor der Formpruefung: ohne badges-Feld, ohne rating
+    // Ein Eintrag von vor der Formprüfung: ohne badges-Feld, ohne rating
     win.kbsMem['kbs_v4_cache'] = {
         '3532008625': { ts: Date.now() - 3600e3, complete: true, variant: 'profil',
             data: { satisfaction: 'TOP', activeDays: 400 } }
@@ -265,7 +265,7 @@ test('Tageslimit: keine Prellung auch bei zwei Workern, und Versuche zählen', a
 
 test('Voller Tageslimit: Cachedaten bleiben sichtbar, neue Anfragen bleiben aus', async () => {
     const win = loadWindow(fixture('listing.html'), { config: { MAX_PER_DAY: 10 }, respond: responder() });
-    await runProcessAll(win, false);            // Cache mit zwei Treffern fuellen
+    await runProcessAll(win, false);            // Cache mit zwei Treffern füllen
     const requestsVorher = win.requests.length;
     assert.equal(requestsVorher, 3, 'im ersten Lauf drei Versuche');
 

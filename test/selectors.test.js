@@ -1,5 +1,5 @@
 'use strict';
-// Prüft Selektoren (neues Astro-Markup + alter Vue-Fallback) und die
+// Prüft Selektoren (neüs Astro-Markup + alter Vü-Fallback) und die
 // Verkäufer-Datenextraktion aus den Detailseiten.
 const test = require('node:test');
 const { after, afterEach } = test;
