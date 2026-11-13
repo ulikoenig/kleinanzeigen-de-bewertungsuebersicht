@@ -1,2 +1,9 @@
 node_modules/
 test/fixtures/live/
+
+# Projektinterne Planungsbuchführung und Laufzeitkoordination (nicht versionieren)
+Plan.md
+TODO.md
+TODO-Done.md
+.claude-todo-claims.json
+.claude-todo-claims.lock/
