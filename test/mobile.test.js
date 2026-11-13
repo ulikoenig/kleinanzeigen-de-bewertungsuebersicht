@@ -3,8 +3,13 @@
 // Desktop-Auslieferung (gemessen 2026-02): ul#srp-results > li.j-adlistitem ohne
 // article[data-adid], und auf der Detailseite ein userprofile-teaser ohne Kontoalter.
 const test = require('node:test');
+const { after } = test;
 const assert = require('node:assert/strict');
 const { loadWindow, fixture } = require('./helper');
+
+// Ausgefädelte jsdom-Fenster schließen, sonst hält ein offener Nachlauf-Timer
+// den Testprozess fest (siehe test/helper.js).
+after(require('./helper').schliessen);
 
 const OHNE_STUFE = {
     rating: 'unbekannt', satisfaction: 'fehlt', badges: [], activeDays: null,

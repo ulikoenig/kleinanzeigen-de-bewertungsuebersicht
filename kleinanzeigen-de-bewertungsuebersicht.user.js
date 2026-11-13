@@ -366,18 +366,36 @@
         return (card.matches && card.matches('li.j-adlistitem')) ? 'teaser' : 'profil';
     }
 
+    // Formpruefung eines Cache-Eintrags: ein Eintrag, den wir nicht darstellen
+    // koennen, wuerde bei jedem Treffer erneut werfen und die Karte dauerhaft offen
+    // lassen. Alte/beschädigte Einträge werden deshalb verworfen - die Karte wird
+    // dann ganz normal neu geladen.
+    function isUsableEntry(entry) {
+        const d = entry && entry.data;
+        return !!(d && typeof d === 'object' && Array.isArray(d.badges) &&
+            typeof d.rating === 'string');
+    }
+
     // Verwertbarer Cache-Treffer fuer diese Karte, oder null.
     function cacheHit(adId, card) {
-        const hit = getCache()[adId];
+        const cache = getCache();
+        const hit = cache[adId];
         if (!hit || !hit.data) return null;
+        if (!isUsableEntry(hit)) {
+            delete cache[adId];
+            store(NS + 'cache', cache);
+            warn('Unbrauchbaren Cache-Eintrag verworfen:', adId);
+            return null;
+        }
         const vollstaendig = hit.complete === true;
         const erlaubt = vollstaendig
             ? CONFIG.CACHE_TTL_DAYS * 864e5
             : CONFIG.CACHE_TTL_INCOMPLETE_HOURS * 3600e3;
         if ((Date.now() - (hit.ts || 0)) >= erlaubt) return null;
         // Ein unvollstaendiger Auszug taugt nur fuer die Auslieferungsart, die ihn
-        // erzeugt hat: sonst zeigt ein Desktop-Laufen fuer eine mobile Teilinformation
-        // sieben Tage lang “Kontoalter unbekannt”, obwohl es die Daten gaebe.
+        // erzeugt hat: sonst zeigt ein Desktop-Lauf wegen einer mobilen
+        // Teilinformation sieben Tage lang “Kontoalter unbekannt”, obwohl es die
+        // Daten gäbe.
         if (!vollstaendig && hit.variant !== deliveryVariant(card)) return null;
         return hit;
     }
@@ -502,9 +520,17 @@
     }
 
     let statusEl = null;
-    function setStatus(msg) {
+    let statusTimer = null;
+    let statusBleibt = false;
+
+    // Eine Sperung (Cooldown, Tageslimit) ist wichtiger als eine Statistikmeldung:
+    // sie bleibt stehen, und kein abgelaufener Timer einer aelteren Meldung darf sie
+    // loeschen. Deshalb traegt jede Meldung jetzt ihre Anzeigedauer selbst.
+    function setStatus(msg, bleibt) {
+        if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
         if (!msg) {
             if (statusEl) { statusEl.remove(); statusEl = null; }
+            statusBleibt = false;
             return;
         }
         if (!statusEl) {
@@ -513,6 +539,8 @@
             document.body.appendChild(statusEl);
         }
         statusEl.textContent = msg;
+        statusBleibt = !!bleibt;
+        if (!bleibt) statusTimer = setTimeout(() => setStatus(''), 10000);
     }
 
     function cardInfoHost(card) {
@@ -633,11 +661,24 @@
     }
 
     let running = false;
-    let stopRequested = false;
+    let stopRequested = false;     // bricht den laufenden Pool ab
+    let userStopped = false;       // vom Nutzer gestoppt: nichts automatisch neu starten
+    let cooldownTimer = null;
     const stats = { cached: 0, fetched: 0, failed: 0, blocked: 0, error: 0, quotaSkip: 0 };
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const jitter = () => CONFIG.DELAY_MIN + Math.random() * (CONFIG.DELAY_MAX - CONFIG.DELAY_MIN);
+
+    // Vollständiges, gefahrlos renderbares Ergebnis für eine nicht auswertbare
+    // Karte. Ein handgeschriebenes Teillobject wuerde in renderBadge erneut werfen.
+    function failedData(status) {
+        return {
+            name: '', userId: '', type: '', variant: '', activeDays: null, active: '',
+            satisfaction: 'fehlt', reliability: false, friendliness: false,
+            sustainability: '', badges: [], rating: 'unbekannt',
+            failed: true, failStatus: status
+        };
+    }
 
     async function handleCard(card, index, total) {
         const adId = getAdId(card) || ('url_' + getDetailUrl(card));
@@ -669,18 +710,14 @@
             warn('HTTP', status, '- Bot-Gegenwehr getroffen. Cooldown bis',
                 new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
             setStatus('Blockiert (HTTP ' + status + ') – ' + CONFIG.COOLDOWN_MINUTES +
-                ' Min Pause. Ctrl+F8 zum frühen Neustart.');
+                ' Min Pause. Ctrl+F8 zum frühen Neustart.', true);
             return;
         }
 
         if (!doc) {
             warn('Detailseite nicht geladen:', getDetailUrl(card), 'Status', status);
             stats.failed++;
-            renderBadge(card, {
-                rating: 'unbekannt', satisfaction: 'fehlt', badges: [],
-                activeDays: null, active: '', type: '', name: '', failed: true, failStatus: status,
-                reliability: false, friendliness: false, sustainability: ''
-            });
+            renderBadge(card, failedData(status));
             return;
         }
 
@@ -695,7 +732,7 @@
                 warn('Bot-Gegenwehr mit Status 200 erkannt. Cooldown bis',
                     new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
                 setStatus('Blockiert (Seite verlangt eine Bestätigung) – ' + CONFIG.COOLDOWN_MINUTES +
-                    ' Min Pause. Ctrl+F8 zum frühen Neustart.');
+                    ' Min Pause. Ctrl+F8 zum frühen Neustart.', true);
                 return;
             }
             // Ein leeres Ergebnis wird nicht gecacht: sonst bliebe die Karte bis zum
@@ -733,8 +770,9 @@
         const cd = cooldownUntil();
         if (cd > Date.now() && !force) {
             setStatus('Cooldown bis ' + new Date(cd).toLocaleTimeString('de-DE') +
-                ' – Ctrl+F8 ignoriert das Limit.');
+                ' – Ctrl+F8 ignoriert das Limit.', true);
             warn('Cooldown aktiv bis', new Date(cd).toLocaleTimeString('de-DE'));
+            planeCooldownFortsetzung();
             return;
         }
         if (force) store(NS + 'cooldown', 0);
@@ -749,11 +787,12 @@
         if (todayUsed() >= CONFIG.MAX_PER_DAY) {
             warn('Tageslimit (' + CONFIG.MAX_PER_DAY + ') erreicht - gezeigt wird, was bereits gecacht ist.');
             setStatus('Tageslimit (' + CONFIG.MAX_PER_DAY + ') erreicht: gecacht angezeigte Bewertungen, '
-                + 'neue Detailseiten erst nach Reset. Ctrl+Shift+F8 löscht den Zähler.');
+                + 'neue Detailseiten erst nach Reset. Ctrl+Shift+F8 löscht den Zähler.', true);
         }
 
         running = true;
         stopRequested = false;
+        userStopped = false;
         Object.keys(stats).forEach(k => stats[k] = 0);
         log('Verarbeite', cards.length, 'Anzeigen (Tageslimit', CONFIG.MAX_PER_DAY +
             ', bereits genutzt', todayUsed() + ')');
@@ -788,24 +827,55 @@
         if (stats.error) hinweise.push(stats.error + ' Karte mit Ausnahmefehler (Strg+F8 = erneut)');
         if (stats.blocked) hinweise.push(stats.blocked + ' blockiert');
         if (stats.quotaSkip) hinweise.push(stats.quotaSkip + ' ohne Anfrage (Tageslimit)');
-        setStatus('Fertig: ' + cards.length + ' Karten · ' + stats.fetched + ' neue Anfragen · ' +
+        const fertig = 'Fertig: ' + cards.length + ' Karten · ' + stats.fetched + ' neue Anfragen · ' +
             todayUsed() + '/' + CONFIG.MAX_PER_DAY + ' heute' +
-            (hinweise.length ? ' · ' + hinweise.join(' · ') : ''));
-        setTimeout(() => setStatus(''), 10000);
+            (hinweise.length ? ' · ' + hinweise.join(' · ') : '');
+        if (cooldownUntil() > Date.now()) planeCooldownFortsetzung();
+
+        const spater = cooldownUntil();
+        if (stats.blocked > 0 || spater > Date.now()) {
+            // Die Statistik durfte die Sperung nicht ueberschreiben - beide zusammen.
+            setStatus('Blockiert – Cooldown bis ' + new Date(spater).toLocaleTimeString('de-DE') +
+                '. Ctrl+F8 startet früher. | ' + fertig, true);
+        } else {
+            setStatus(fertig);
+        }
     }
 
     function stop() {
         stopRequested = true;
-        setStatus('Gestoppt.');
+        userStopped = true;
+        if (cooldownTimer) { clearTimeout(cooldownTimer); cooldownTimer = null; }
+        setStatus('Gestoppt. Strg+F8 startet wieder.');
+    }
+
+    // Nach einem Cooldown darf das Skript nicht bis zum Seitenneuladen schlafen:
+    // der Ablauf wird vorgemerkt und dann automatisch weitergearbeitet.
+    function planeCooldownFortsetzung() {
+        if (cooldownTimer) clearTimeout(cooldownTimer);
+        const bis = cooldownUntil() - Date.now();
+        if (bis <= 0) { cooldownTimer = null; return; }
+        cooldownTimer = setTimeout(() => {
+            cooldownTimer = null;
+            log('Cooldown abgelaufen – automatischer Lauf.');
+            processAll(false);
+        }, bis + 400);
     }
 
     // Nachladen von Karten (Unendliche Liste, Filter-Rerender) beobachten
     function observeDom() {
         let timer = null;
-        const obs = new MutationObserver(() => {
+        const obs = new MutationObserver((eintraege) => {
+            // Eigene Einfuegungen (Bewertungszeile, Statusleiste) duerfen den
+            // Beobachter nicht erneut ausloesen - sonst haelt er sich selbst beschaeftigt.
+            const fremd = eintraege.some(e => Array.from(e.addedNodes).some(n =>
+                n.nodeType === 1 && !(n.closest && n.closest('.kbs-info, #kbs-status')) &&
+                !n.classList.contains('kbs-info')));
+            if (!fremd) return;
             clearTimeout(timer);
             timer = setTimeout(() => {
-                if (running || stopRequested) return;
+                if (running || userStopped) return;
+                if (cooldownUntil() > Date.now()) { planeCooldownFortsetzung(); return; }
                 if (collectCards(false).length) processAll(false);
             }, 800);
         });

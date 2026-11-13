@@ -2,8 +2,35 @@
 // Prüft Abarbeitung: ein Request pro Karte, Cache, Tageszähler,
 // Fehlerpfad (404), Bot-Gegenwehr (403 -> Cooldown + Stopp), manueller Retry.
 const test = require('node:test');
+const { after } = test;
 const assert = require('node:assert/strict');
 const { loadWindow, fixture, runProcessAll, mem } = require('./helper');
+
+// Ausgefädelte jsdom-Fenster schließen, sonst hält ein offener Nachlauf-Timer
+// den Testprozess fest (siehe test/helper.js).
+after(require('./helper').schliessen);
+
+test('Nach Cooldown-Ablauf arbeitet das Skript selbst weiter, ein ausdrücklicher Stopp nicht', async () => {
+    const win = loadWindow(fixture('listing.html'), {
+        config: { COOLDOWN_MINUTES: 0.05 },          // 3 Sekunden Sperpause
+        respond: responder(403)
+    });
+    await runProcessAll(win, false);
+    const nachDerSperre = win.requests.length;
+    assert.ok(nachDerSperre >= 1 && nachDerSperre <= 2, 'Sperre nach einer Anfrage pro Worker');
+
+    await new Promise(r => setTimeout(r, 4200));      // Ablauf abwarten, kein Neuladen
+    assert.ok(win.requests.length > nachDerSperre, 'automatischer Lauf nach Cooldown-Ende');
+
+    const win2 = loadWindow(fixture('listing.html'), {
+        config: { COOLDOWN_MINUTES: 0.02 }, respond: responder(403)
+    });
+    await runProcessAll(win2, false);
+    win2.kbsDebug.stop();                             // ausdrücklicher Stopp
+    const gestoppt = win2.requests.length;
+    await new Promise(r => setTimeout(r, 2000));
+    assert.equal(win2.requests.length, gestoppt, 'der vorgemerkte Nachlauf ist nach dem Stopp weg');
+});
 
 const PAGES = {
     '3532008625': { status: 200, html: () => fixture('detail-full.html') },
@@ -84,6 +111,10 @@ test('HTTP 403: Cooldown gesetzt und Abarbeitung gestoppt', async () => {
     await runProcessAll(win, false);
     assert.ok(win.requests.length <= 2, 'Pool bricht ab, statt alle Karten abzurufen');
     assert.ok(mem(win)['kbs_v4_cooldown'] > Date.now(), 'Cooldown gespeichert');
+    const statusText = win.document.getElementById('kbs-status').textContent;
+    assert.match(statusText, /Cooldown bis \d{2}:\d{2}/,
+        'die Sperung bleibt stehen, statt von der Statistik verdrängt zu werden');
+    assert.match(statusText, /Fertig:/, 'die Statistik ist angehängt, nicht verloren');
     assert.equal(win.document.querySelectorAll('.kbs-info').length, 0, 'keine Bewertungen erraten');
 
     // Folgender automatischer Lauf respektiert den Cooldown
@@ -116,11 +147,15 @@ test('Detailseite ohne Anzeigenbezug: Skript greift nicht auf der Anzeigenseite'
 
 test('Ausnahme in einer Karte (beschädigter Cache-Eintrag) blockiert nicht den ganzen Lauf', async () => {
     const win = loadWindow(fixture('listing.html'), { respond: responder() });
-    // Ein Eintrag in alter/beschädigter Form: als vollständig angemeldet, aber die
-    // Daten ohne badges-Feld -> renderBadge wirft
+    // Ein Eintrag, der der Formpruefung (T46) genuegt, aber beim Rendern wirft:
+    // ein getter, der kaputte Daten liefert. Damit bleibt der Fall erhalten, dass
+    // eine einzelne Karte eine Ausnahme ausloest.
+    const kaputt = { rating: 'gut', badges: [], activeDays: null };
+    Object.defineProperty(kaputt, 'satisfaction', {
+        get() { throw new Error('kaputter Cache-Inhalt'); }
+    });
     win.kbsMem['kbs_v4_cache'] = {
-        '3532008625': { ts: Date.now(), variant: 'profil', complete: true,
-            data: { rating: 'gut', satisfaction: 'fehlt', activeDays: null } }
+        '3532008625': { ts: Date.now(), variant: 'profil', complete: true, data: kaputt }
     };
     await runProcessAll(win, false);
 
@@ -145,6 +180,31 @@ const BLOCKSEITE = '<html><head><title>Sicherheitsprüfung · kleinanzeigen.de</
 const BLOCKTITEL_MIT_PROFIL = '<html><head><title>Roboter Staubsauger – kleinanzeigen.de</title></head><body>' +
     '<div id="viewad-profile-box"><div class="userprofile-vip-details-text">Aktiv seit 04.06.2020</div>' +
     '<span class="userbadge userbadges-profile-rating">TOP Zufriedenheit</span></div></body></html>';
+
+test('Unbrauchbarer Cache-Eintrag wird verworfen und die Karte neu geladen', async () => {
+    const win = loadWindow(fixture('listing.html'), { respond: responder() });
+    // Ein Eintrag von vor der Formpruefung: ohne badges-Feld, ohne rating
+    win.kbsMem['kbs_v4_cache'] = {
+        '3532008625': { ts: Date.now() - 3600e3, complete: true, variant: 'profil',
+            data: { satisfaction: 'TOP', activeDays: 400 } }
+    };
+    await runProcessAll(win, false);
+
+    assert.equal(win.kbsDebug.stats.error, 0, 'kein Ausnahmefehler mehr, der Eintrag wird aussortiert');
+    assert.ok(win.requests.some(u => /3532008625/.test(u)), 'Karte wird regulär neu geladen');
+    const infos = [...win.document.querySelectorAll('.kbs-info')];
+    assert.equal(infos.length, 3, 'alle drei Karten sind bewertet');
+    // Die dritte Karte ist die 404-Karte des Grund-Fixtures - sie darf weiterhin als
+    // Fehler gelten, die ehemals kaputt gecachte Karte dagegen nicht.
+    const karte = win.kbsDebug.collectCards(true).find(c => win.kbsDebug.getAdId(c) === '9876543');
+    assert.ok(karte.querySelector('.kbs-info').classList.contains('kbs-failed'),
+        'die reguläre 404-Karte bleibt als Fehler markiert');
+    const gerettete = Array.from(win.document.querySelectorAll('.kbs-info'))
+        .filter(i => i.classList.contains('kbs-failed'));
+    assert.equal(gerettete.length, 1, 'nur die 404-Karte ist ein Fehler, die ausgebesserte nicht');
+    const cache = win.kbsMem['kbs_v4_cache'];
+    assert.ok(Array.isArray(cache['3532008625'].data.badges), 'der neue Eintrag ist vollständig');
+});
 
 test('Testhelfer: Kartenklon mit eigener Anzeigen-ID', () => {
     const win = loadWindow(fixture('listing.html'));
@@ -231,6 +291,10 @@ test('Bot-Gegenwehr mit Status 200: Cooldown statt Cache, automatischer Retry er
 
     assert.ok(win.requests.length <= 2, 'Pool bricht ab, statt alle Karten abzurufen');
     assert.ok(mem(win)['kbs_v4_cooldown'] > Date.now(), 'Cooldown gespeichert');
+    const statusText = win.document.getElementById('kbs-status').textContent;
+    assert.match(statusText, /Cooldown bis \d{2}:\d{2}/,
+        'die Sperung bleibt stehen, statt von der Statistik verdrängt zu werden');
+    assert.match(statusText, /Fertig:/, 'die Statistik ist angehängt, nicht verloren');
     assert.equal(Object.keys(mem(win)['kbs_v4_cache'] || {}).length, 0, 'nichts Unbrauchbares gecacht');
     assert.equal(win.kbsDebug.stats.blocked, win.requests.length, 'als Blockierung gezählt');
     assert.equal(win.document.querySelectorAll('.kbs-info').length, 0, 'es wird nichts erfunden');

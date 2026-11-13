@@ -18,6 +18,18 @@ const LISTING_URL = 'https://www.kleinanzeigen.de/s-fahrraeder/fahrrad/k0c217';
 // gesetzt, und der Helfer bricht ab, wenn diese Übergabe nicht existiert.
 const TEST_CONFIG = { DELAY_MIN: 1, DELAY_MAX: 2, FETCH_TIMEOUT: 900 };
 
+// Jede geoeffnete jsdom-Inferenz wird vorgemerkt, damit Tests sie am Ende
+// schliessen koennen - ein offener Nachlauf- oder Cooldown-Timer haelt sonst
+// den Testprozess am Ende fest (sichtbar als haengender npm test).
+const geoeffnete = [];
+
+function schliessen() {
+    while (geoeffnete.length) {
+        const dom = geoeffnete.pop();
+        try { dom.window.close(); } catch (e) { /* egal */ }
+    }
+}
+
 function fixture(name) {
     return fs.readFileSync(path.join(FIXTURES, name), 'utf8');
 }
@@ -48,6 +60,7 @@ function loadWindow(html, opts = {}) {
         };
     }
 
+    geoeffnete.push(dom);
     win.eval(fs.readFileSync(SCRIPT, 'utf8'));
     if (!win.kbsDebug) throw new Error('window.kbsDebug fehlt – Skript bricht ab');
     if (!win.kbsDebug.config) {
@@ -63,4 +76,4 @@ async function runProcessAll(win, force) {
     await win.kbsDebug.processAll(force);
 }
 
-module.exports = { loadWindow, fixture, LISTING_URL, runProcessAll, SCRIPT, TEST_CONFIG, mem: w => w.kbsMem };
+module.exports = { loadWindow, fixture, LISTING_URL, runProcessAll, SCRIPT, TEST_CONFIG, schliessen, mem: w => w.kbsMem };

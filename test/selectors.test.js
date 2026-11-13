@@ -2,8 +2,13 @@
 // Prüft Selektoren (neues Astro-Markup + alter Vue-Fallback) und die
 // Verkäufer-Datenextraktion aus den Detailseiten.
 const test = require('node:test');
+const { after } = test;
 const assert = require('node:assert/strict');
 const { loadWindow, fixture, runProcessAll } = require('./helper');
+
+// Ausgefädelte jsdom-Fenster schließen, sonst hält ein offener Nachlauf-Timer
+// den Testprozess fest (siehe test/helper.js).
+after(require('./helper').schliessen);
 
 test('Suchkarten: 3 Anzeigen, Werbekarte ohne Anzeige wird ignoriert', () => {
     const win = loadWindow(fixture('listing.html'));
