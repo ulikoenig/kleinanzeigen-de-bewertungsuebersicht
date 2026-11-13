@@ -69,6 +69,42 @@ function kartenKlon(win, anzahl) {
     }
 }
 
+test('Wiederholte Netzfehler: gestaffelte Pause und Abbruch nach der Schwelle', async () => {
+    const win = loadWindow(fixture('mobile-listing.html'), {
+        config: { MAX_FAILED_SERIES: 3, BACKOFF_BASE: 1, BACKOFF_MAX: 2 },
+        respond: () => null                      // Verbindungsabbruch ohne Antwort
+    });
+    await runProcessAll(win, false);
+
+    assert.ok(win.requests.length <= 4,
+        'der Lauf bricht ab, statt alle 32 Karten abzurufen (zwei Worker, eine Zählerreihe)');
+    assert.ok(win.requests.length >= 3, 'die Schwelle selbst erreicht er aber');
+    assert.ok(win.kbsDebug.stats.backoff >= 2, 'vor jedem neuen Versuch liegt eine Pause');
+    const status = win.document.getElementById('kbs-status').textContent;
+    assert.match(status, /keine Detailseite geladen/, 'der Abbruch ist als solcher gemeldet');
+    assert.match(status, /Fertig:/, 'die Statistik bleibt trotzdem lesbar');
+});
+
+test('Netzfehler erholen sich: ein Erfolg beendet die Fehlerreihe', async () => {
+    let versuch = 0;
+    const win = loadWindow(fixture('listing.html'), {
+        config: { MAX_FAILED_SERIES: 2, BACKOFF_BASE: 1, BACKOFF_MAX: 2 },
+        respond: (url) => {
+            versuch++;
+            if (versuch === 1) return null;      // erste Karte: Verbindungsabbruch
+            const id = (url.match(/\/(\d{6,})-\d+/) || [])[1];
+            return { status: 200, html: fixture(id === '3566219879' ? 'detail-ok.html' : 'detail-full.html') };
+        }
+    });
+    await runProcessAll(win, false);
+
+    assert.equal(versuch, 3, 'trotz eines Fehlers werden alle drei Karten versucht');
+    assert.equal(win.kbsDebug.stats.backoff, 1, 'genau eine Pause, danach normale Reihenfolge');
+    assert.equal(win.document.querySelectorAll('.kbs-info').length, 3, 'alle Karten bewertet');
+    assert.match(win.document.getElementById('kbs-status').textContent, /Fertig: 3 Karten/,
+        'kein Abbruch, weil die Fehlerreihe riss');
+});
+
 test('Abarbeitung: 1 Request pro Karte, Ergebnis als Farbstufe sichtbar', async () => {
     const win = loadWindow(fixture('listing.html'), { respond: responder() });
     await runProcessAll(win, false);

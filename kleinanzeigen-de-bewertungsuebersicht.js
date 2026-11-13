@@ -44,6 +44,9 @@
         FETCH_TIMEOUT: 15000,    // ms
         CACHE_TTL_DAYS: 7,       // Anzeige-Daten wiederverwenden
         COOLDOWN_MINUTES: 30,    // nach 403/429/Blockseite: nichts mehr laden
+        BACKOFF_BASE: 4000,      // ms: erste Pause nach einem Netzfehler
+        BACKOFF_MAX: 300000,     // ms: oberste Grenze der gestaffelten Pause
+        MAX_FAILED_SERIES: 5,    // so viele Fehlschläge hintereinander, dann Abbruch
         CACHE_TTL_INCOMPLETE_HOURS: 24 // unvollstaendiger Auszug (z. B. mobil ohne
                                        // Kontoalter) wird deutlich kuerzer gehalten
     };
@@ -662,7 +665,7 @@
     let stopRequested = false;     // bricht den laufenden Pool ab
     let userStopped = false;       // vom Nutzer gestoppt: nichts automatisch neu starten
     let cooldownTimer = null;
-    const stats = { cached: 0, fetched: 0, failed: 0, blocked: 0, error: 0, quotaSkip: 0 };
+    const stats = { cached: 0, fetched: 0, failed: 0, blocked: 0, error: 0, quotaSkip: 0, backoff: 0 };
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const jitter = () => CONFIG.DELAY_MIN + Math.random() * (CONFIG.DELAY_MAX - CONFIG.DELAY_MIN);
@@ -686,13 +689,13 @@
             hit.data.cached = true;
             renderBadge(card, hit.data);
             stats.cached++;
-            return;
+            return 'cached';
         }
         // Tageslimit bremst nur echte Anfragen - eine bereits gecachte Bewertung
         // kostet nichts und muss deshalb auch bei vollem Zähler zu sehen sein.
         if (todayUsed() >= CONFIG.MAX_PER_DAY) {
             stats.quotaSkip++;
-            return;
+            return 'quota';
         }
         setStatus('Prüfe Verkäufer ' + (index + 1) + '/' + total + ' … (' + todayUsed() + '/' + CONFIG.MAX_PER_DAY + ')');
         // Der Zähler läuft vor der Anfrage und zählt den Versuch, nicht den Erfolg:
@@ -709,14 +712,14 @@
                 new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
             setStatus('Blockiert (HTTP ' + status + ') – ' + CONFIG.COOLDOWN_MINUTES +
                 ' Min Pause. Ctrl+F8 zum frühen Neustart.', true);
-            return;
+            return 'blocked';
         }
 
         if (!doc) {
             warn('Detailseite nicht geladen:', getDetailUrl(card), 'Status', status);
             stats.failed++;
             renderBadge(card, failedData(status));
-            return;
+            return 'failed';
         }
 
         stats.fetched++;
@@ -731,7 +734,7 @@
                     new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
                 setStatus('Blockiert (Seite verlangt eine Bestätigung) – ' + CONFIG.COOLDOWN_MINUTES +
                     ' Min Pause. Ctrl+F8 zum frühen Neustart.', true);
-                return;
+                return 'blocked';
             }
             // Ein leeres Ergebnis wird nicht gecacht: sonst bliebe die Karte bis zum
             // Ablauf der TTL (sieben Tage) auf “unbekannt” stehen, obwohl erneut
@@ -751,6 +754,7 @@
         renderBadge(card, data);
         log('✓', adId, data.rating, '|', data.type || '?', '|', data.satisfaction,
             '|', data.active || 'kein Datum', '|', todayUsed() + '/' + CONFIG.MAX_PER_DAY);
+        return data.failed ? 'soft' : 'ok';
     }
 
     function looksLikeListing(force) {
@@ -796,12 +800,15 @@
             ', bereits genutzt', todayUsed() + ')');
 
         let i = 0;
+        let fehlerSerien = 0;   // Fehlschläge hintereinander (über beide Worker hinweg)
+        let abbruchGrund = '';  // warum der Lauf vorzeitig endete, für die Statusmeldung
         const worker = async () => {
             while (!stopRequested) {
                 if (i >= cards.length) return;
                 const idx = i++;
+                let ergebnis = 'error';
                 try {
-                    await handleCard(cards[idx], idx, cards.length);
+                    ergebnis = await handleCard(cards[idx], idx, cards.length) || 'error';
                 } catch (e) {
                     // Eine einzelne kaputte Karte (fremdes Markup, unerwartetes
                     // Ergebnis) darf weder die anderen Karten aufhalten noch den
@@ -809,6 +816,27 @@
                     stats.error++;
                     warn('Karte', idx + 1, 'schlug fehl:', e);
                 }
+
+                // Gestaffelte Pause nach Netzfehlern: eine store Seite oder ein
+                // Timeout führt sonst zu einer series rascher Nachfragen.
+                if (ergebnis === 'failed' || ergebnis === 'error') {
+                    fehlerSerien++;
+                    if (fehlerSerien >= CONFIG.MAX_FAILED_SERIES) {
+                        abbruchGrund = 'Wiederholt keine Detailseite geladen (' + fehlerSerien +
+                            ' Fehlversuche in Folge) – Abbruch. Ctrl+F8 versucht es später erneut.';
+                        setStatus(abbruchGrund, true);
+                        warn('Abbruch nach', fehlerSerien, 'Fehlversuchen in Folge');
+                        stopRequested = true;
+                        return;
+                    }
+                    const pause = Math.min(
+                        CONFIG.BACKOFF_BASE * Math.pow(2, fehlerSerien - 1), CONFIG.BACKOFF_MAX);
+                    stats.backoff++;
+                    warn(fehlerSerien + '. Fehlversuch in Folge – Pause', pause, 'ms');
+                    await sleep(pause);
+                    continue;
+                }
+                if (ergebnis === 'ok' || ergebnis === 'cached') fehlerSerien = 0;
                 if (i < cards.length) await sleep(jitter());
             }
         };
@@ -825,13 +853,16 @@
         if (stats.error) hinweise.push(stats.error + ' Karte mit Ausnahmefehler (Strg+F8 = erneut)');
         if (stats.blocked) hinweise.push(stats.blocked + ' blockiert');
         if (stats.quotaSkip) hinweise.push(stats.quotaSkip + ' ohne Anfrage (Tageslimit)');
+        if (stats.backoff) hinweise.push(stats.backoff + ' × gestaffelte Pause');
         const fertig = 'Fertig: ' + cards.length + ' Karten · ' + stats.fetched + ' neue Anfragen · ' +
             todayUsed() + '/' + CONFIG.MAX_PER_DAY + ' heute' +
             (hinweise.length ? ' · ' + hinweise.join(' · ') : '');
         if (cooldownUntil() > Date.now()) planeCooldownFortsetzung();
 
         const spater = cooldownUntil();
-        if (stats.blocked > 0 || spater > Date.now()) {
+        if (abbruchGrund) {
+            setStatus(abbruchGrund + ' | ' + fertig, true);
+        } else if (stats.blocked > 0 || spater > Date.now()) {
             // Die Statistik durfte die Sperung nicht ueberschreiben - beide zusammen.
             setStatus('Blockiert – Cooldown bis ' + new Date(spater).toLocaleTimeString('de-DE') +
                 '. Ctrl+F8 startet früher. | ' + fertig, true);
