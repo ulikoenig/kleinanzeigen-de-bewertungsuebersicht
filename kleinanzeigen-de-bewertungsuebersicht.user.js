@@ -45,15 +45,21 @@
         DELAY_MAX: 1800,         // ms (zufällig, wirkt wie menschliches Tempo)
         FETCH_TIMEOUT: 15000,    // ms
         CACHE_TTL_DAYS: 7,       // Anzeige-Daten wiederverwenden
-        COOLDOWN_MINUTES: 30     // nach 403/429/Blockseite: nichts mehr laden
+        COOLDOWN_MINUTES: 30,    // nach 403/429/Blockseite: nichts mehr laden
+        CACHE_TTL_INCOMPLETE_HOURS: 24 // unvollstaendiger Auszug (z. B. mobil ohne
+                                       // Kontoalter) wird deutlich kuerzer gehalten
     };
 
     const NS = 'kbs_v4_';
     const PREFIX = '[Verkäufer-Checker]';
 
-    // Karten: neue Astro-Oberfläche, danach alte (Vue-)Oberfläche
+    // Karten: neue Astro-Oberfläche (Desktop), mobile Auslieferung, dann alte
+    // (Vue-)Oberfläche. Die mobile Seite liefert anderes Markup: sie nutzt
+    // ul#srp-results > li.j-adlistitem ohne article[data-adid] und ohne
+    // #srchrslt-adtable (gemessen 2026-02 an einer Android-Auslieferung).
     const CARD_SELECTOR = [
         'li[data-clickable="card"]',
+        'li.j-adlistitem',
         '.aditem',
         '[data-testid="l-aditem"]',
         '[class*="ad-list-item"]'
@@ -160,20 +166,65 @@
     // ------------------------------- Extraktion -------------------------------
     // Detailseiten nutzen weiterhin das klassische Markup (#viewad-profile-box).
     // Zusätzlich gibt es Text-/Klassen-Fallbacks für eine mögliche neue Variante.
+    // Zonen mit frei schreibbarem Text des Verkäufers (Anzeigentitel, Beschreibung):
+    // niemals Datenquelle. Gemessen an echten Detailseiten: 2.169 bis 3.546 Zeichen
+    // frei erfindbarer Text, beim Gewerbetext beginnt er mit “✅LEASING ✅FINANZIERUNG
+    // … ✅TOP BERATUNG“.
+    const SELLER_TEXT_SELECTOR = [
+        '#viewad-description', '#viewad-title', '#viewad-detailsection',
+        '[id*="description"]', '[class*="detailsection"]', '[class*="adshowdescription"]'
+    ].join(', ');
+
+    function isSellerZone(el) {
+        return !!(el && el.matches && el.matches(SELLER_TEXT_SELECTOR));
+    }
+
+    // Ein Element, das innerhalb einer Verkäufer-Textzone liegt, ist ebenso
+    // unvertrauenswuerdig - auch wenn der Rahmen selbst in Ordnung ist.
+    function insideSellerZone(scope, el) {
+        if (!el) return false;
+        for (const zone of scope.querySelectorAll(SELLER_TEXT_SELECTOR)) {
+            if (zone.contains(el)) return true;
+        }
+        return false;
+    }
+
+    // Vertrauenswuerdiger Rahmen der Auswertung: ausschliesslich der
+    // systemseitige Profil-/Kontaktbereich (gemessen an echten Detailseiten: Name,
+    // Nutzer-Typ, “Aktiv seit”, Abzeichen und userId-Link liegen alle darin).
+    // Kein Rueckfall auf document.body - damit lesen die Text-Fallbacks niemals
+    // den Anzeigentext, in dem der Verkäufer behaupten kann, was er will.
+    function profileScope(doc) {
+        const candidates = [
+            '#viewad-profile-box', '#viewad-contact',
+            '[class*="userprofile-teaser"]', '[class*="userprofile"]'
+        ];
+        for (const sel of candidates) {
+            const el = doc.querySelector(sel);
+            if (el && !isSellerZone(el)) return el;
+        }
+        return null;
+    }
+
+    // Text des Rahmens ohne verkäuferkontrollierte Unterbereiche.
+    function trustedText(scope) {
+        const parts = [];
+        (function walk(node) {
+            for (const child of node.childNodes) {
+                if (child.nodeType === 3) { parts.push(child.nodeValue); continue; }
+                if (child.nodeType !== 1 || isSellerZone(child)) continue;
+                walk(child);
+            }
+        })(scope);
+        return clean(parts.join(' '));
+    }
+
     function extractSeller(doc) {
-        const box = doc.querySelector('#viewad-profile-box')
-            || doc.querySelector('#viewad-contact')
-            || doc.querySelector('[class*="userprofile"]')
-            || doc.body
-            || doc;
-
-        const scope = box.closest('div, section') || box;
-        const text = clean(scope.textContent || '');
-
         const d = {
             name: '',
             userId: '',
             type: '',
+            variant: '',
             activeDays: null,
             active: '',
             satisfaction: 'fehlt',
@@ -183,7 +234,18 @@
             badges: []
         };
 
-        const nameEl = scope.querySelector('.userprofile-vip, [class*="userprofile--name"], [class*="userprofile-vip"]');
+        const scope = profileScope(doc);
+        if (!scope) {
+            // Nichts Vertrauenswuerdiges auf der Seite: lieber “unbekannt” als
+            // irgendetwas aus dem Anzeigentext zu uebernehmen.
+            d.rating = computeRating(d);
+            return d;
+        }
+        const text = trustedText(scope);
+        d.variant = scope.matches('[class*="userprofile-teaser"]') ? 'teaser' : 'profil';
+
+        const nameEl = scope.querySelector('.userprofile-vip, [class*="userprofile--name"], ' +
+            '[class*="userprofile-vip"], [class*="userprofile-teaser--title"]');
         if (nameEl) d.name = clean(nameEl.textContent);
 
         const userLink = scope.querySelector('a[href*="userId="]')
@@ -220,6 +282,7 @@
         let found = false;
         byKind.forEach(([kind, sel]) => {
             scope.querySelectorAll(sel).forEach(el => {
+                if (insideSellerZone(scope, el)) return;
                 found = true;
                 addBadge(clean(el.textContent), kind);
             });
@@ -227,6 +290,7 @@
 
         if (!found) {
             scope.querySelectorAll('.userbadge, [data-testid*="rating"], [class*="rating-badge"]').forEach(el => {
+                if (insideSellerZone(scope, el)) return;
                 const t = clean(el.textContent);
                 const icon = el.querySelector('[class*="icon-"]');
                 const hay = (String(el.className) + ' ' +
@@ -238,7 +302,16 @@
             });
         }
 
-        // Zufriedenheit, falls kein Badge-Container gefunden wurde
+        // Zufriedenheit, falls kein Badge-Container gefunden wurde. Zuerst das Muster
+        // der mobilen Auslieferung (“Zufriedenheit: TOP” im userprofile-teaser), dann
+        // die Badge-Formulierungen der Desktop-Seite.
+        if (d.satisfaction === 'fehlt') {
+            const mob = text.match(/zufriedenheit:\s*(top|ok|naja)/i);
+            if (mob) {
+                d.satisfaction = mob[1].toUpperCase();
+                d.badges.push('Zufriedenheit: ' + d.satisfaction);
+            }
+        }
         if (d.satisfaction === 'fehlt') {
             if (/top zufriedenheit/i.test(text)) d.satisfaction = 'TOP';
             else if (/naja zufriedenheit/i.test(text)) d.satisfaction = 'NAJA';
@@ -284,6 +357,29 @@
 
         d.rating = computeRating(d);
         return d;
+    }
+
+    // Auslieferungsart einer Karte: Desktop-Markup (Profilbereich mit Kontoalter) oder
+    // mobile Auslieferung (Teaser ohne Kontoalter). Bestimmt, welcher Cache-Auszug
+    // dafuer ueberhaupt in Frage kommt.
+    function deliveryVariant(card) {
+        return (card.matches && card.matches('li.j-adlistitem')) ? 'teaser' : 'profil';
+    }
+
+    // Verwertbarer Cache-Treffer fuer diese Karte, oder null.
+    function cacheHit(adId, card) {
+        const hit = getCache()[adId];
+        if (!hit || !hit.data) return null;
+        const vollstaendig = hit.complete === true;
+        const erlaubt = vollstaendig
+            ? CONFIG.CACHE_TTL_DAYS * 864e5
+            : CONFIG.CACHE_TTL_INCOMPLETE_HOURS * 3600e3;
+        if ((Date.now() - (hit.ts || 0)) >= erlaubt) return null;
+        // Ein unvollstaendiger Auszug taugt nur fuer die Auslieferungsart, die ihn
+        // erzeugt hat: sonst zeigt ein Desktop-Laufen fuer eine mobile Teilinformation
+        // sieben Tage lang “Kontoalter unbekannt”, obwohl es die Daten gaebe.
+        if (!vollstaendig && hit.variant !== deliveryVariant(card)) return null;
+        return hit;
     }
 
     // ------------------------------ Netzwerkteil ------------------------------
@@ -433,6 +529,12 @@
             if (col) return col;
             return article;
         }
+        // Mobile Auslieferung: Textbereich der Karte (Titel, Preis, Ort)
+        if (card.matches && card.matches('li.j-adlistitem')) {
+            const feld = card.querySelector('.adlist--item--descarea')
+                || card.querySelector('[class*="adlist--item--desc"]');
+            return feld || card;
+        }
         // Alte Oberfläche
         return card.querySelector('.aditem-main--bottom')
             || card.querySelector('.aditem-main')
@@ -496,9 +598,19 @@
     }
 
     function getDetailUrl(card) {
-        const article = card.matches('article[data-href]') ? card : card.querySelector('article[data-href]');
-        if (article && article.dataset.href) {
-            return new URL(article.dataset.href, location.origin).href;
+        const artikel = card.matches('article[data-href]') ? card : card.querySelector('article[data-href]');
+        if (artikel && artikel.dataset.href) {
+            // data-href ist Seitengabe: eine protokollrelative oder auswärtige Angabe
+            // würde sonst ins Ausland getragen (@connect bremst nur den GM-Pfad, der
+            // fetch-Fallback nicht). Ungültige oder auswärtige Ziel -> Karte überspringen.
+            try {
+                const url = new URL(artikel.dataset.href, location.origin);
+                if (url.origin === location.origin) return url.href;
+                warn('Karte übersprungen: data-href zeigt auf fremde Herkunft', url.origin);
+            } catch (e) {
+                warn('Karte übersprungen: unbrauchbares data-href', artikel.dataset.href);
+            }
+            return '';
         }
         const a = card.querySelector('a[href*="/s-anzeige/"]');
         return a ? a.href : '';
@@ -530,8 +642,8 @@
     async function handleCard(card, index, total) {
         const adId = getAdId(card) || ('url_' + getDetailUrl(card));
         const cache = getCache();
-        const hit = cache[adId];
-        if (hit && (Date.now() - (hit.ts || 0)) < CONFIG.CACHE_TTL_DAYS * 864e5) {
+        const hit = cacheHit(adId, card);
+        if (hit) {
             hit.data.cached = true;
             renderBadge(card, hit.data);
             stats.cached++;
@@ -594,7 +706,12 @@
             data.failStatus = 'keine Verkäuferdaten';
             warn('Keine Verkäuferdaten erkannt:', getDetailUrl(card));
         } else {
-            putCache(adId, { ts: Date.now(), data });
+            putCache(adId, {
+                ts: Date.now(),
+                variant: data.variant,
+                complete: typeof data.activeDays === 'number',
+                data
+            });
         }
         renderBadge(card, data);
         log('✓', adId, data.rating, '|', data.type || '?', '|', data.satisfaction,
@@ -604,6 +721,7 @@
     function looksLikeListing(force) {
         if (/\/s-anzeige\//.test(location.pathname)) return false;
         if (document.getElementById('srchrslt-adtable')) return true;
+        if (document.getElementById('srp-results')) return true;   // mobile Auslieferung
         return collectCards(force).length >= 2;
     }
 

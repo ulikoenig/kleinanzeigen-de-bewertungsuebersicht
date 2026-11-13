@@ -116,9 +116,11 @@ test('Detailseite ohne Anzeigenbezug: Skript greift nicht auf der Anzeigenseite'
 
 test('Ausnahme in einer Karte (beschädigter Cache-Eintrag) blockiert nicht den ganzen Lauf', async () => {
     const win = loadWindow(fixture('listing.html'), { respond: responder() });
-    // Ein Eintrag in alter/beschädigter Form: Daten ohne badges-Feld -> renderBadge wirft
+    // Ein Eintrag in alter/beschädigter Form: als vollständig angemeldet, aber die
+    // Daten ohne badges-Feld -> renderBadge wirft
     win.kbsMem['kbs_v4_cache'] = {
-        '3532008625': { ts: Date.now(), data: { rating: 'gut', satisfaction: 'fehlt', activeDays: null } }
+        '3532008625': { ts: Date.now(), variant: 'profil', complete: true,
+            data: { rating: 'gut', satisfaction: 'fehlt', activeDays: null } }
     };
     await runProcessAll(win, false);
 
@@ -180,6 +182,47 @@ test('Voller Tageslimit: Cachedaten bleiben sichtbar, neue Anfragen bleiben aus'
     assert.deepEqual(Array.from(infos.map(i => i.className)), ['kbs-info kbs-gut', 'kbs-info kbs-mittel']);
     assert.match(win.document.getElementById('kbs-status').textContent, /Tageslimit/,
         'der Hinweis auf das Limit ist sichtbar');
+});
+
+test('Cache: mobiler Teilauszug wird auf dem Desktop neu geladen, voller Auszug wiederverwendet', async () => {
+    const TEASER = { name: 'Kyrylo', userId: '', type: 'Privat', variant: 'teaser',
+        activeDays: null, active: '', satisfaction: 'TOP', reliability: false,
+        friendliness: false, sustainability: '', badges: ['Zufriedenheit: TOP'], rating: 'gut' };
+    const win = loadWindow(fixture('listing.html'), { respond: responder() });
+    // Ein erst am Tag zuvor mobil gelernten, unvollständiger Auszug:
+    win.kbsMem['kbs_v4_cache'] = { '3532008625': { ts: Date.now() - 6 * 3600e3, variant: 'teaser',
+        complete: false, data: TEASER } };
+    await runProcessAll(win, false);
+
+    assert.ok(win.requests.some(u => /3532008625/.test(u)),
+        'unvollständiger Auszug reicht auf dem Desktop nicht, es wird neu geladen');
+    const infos = [...win.document.querySelectorAll('.kbs-info')];
+    const erste = infos.find(i => i.closest('li') && win.kbsDebug.getAdId(i.closest('li')) === '3532008625');
+    assert.match(win.kbsDebug.getAdId(erste.closest('li')), /3532008625/);
+    assert.match(erste.querySelector('.kbs-chip').textContent, /Jahre? aktiv/,
+        'Kontoalter aus dem Desktop-Profil ersetzt den Teilauszug');
+    assert.equal(erste.className, 'kbs-info kbs-gut');
+
+    // Jetzt ist ein vollständiger Auszug gecacht: zweiter Lauf ohne Markierungen
+    // braucht keine Anfrage mehr (die 404-Karte bleibt als Fehler markiert).
+    win.document.querySelectorAll('.kbs-info:not(.kbs-failed)').forEach(el => el.remove());
+    const vorher = win.requests.length;
+    await runProcessAll(win, false);
+    assert.equal(win.requests.length, vorher, 'vollständiger Auszug wird wiederverwendet');
+    assert.equal(win.kbsDebug.stats.cached, 2, 'beide guten Karten kommen aus dem Cache');
+});
+
+test('Cache: derselbe Teilauszug darf auf einer mobilen Karte stehen bleiben', async () => {
+    const win = loadWindow(fixture('mobile-listing.html'), { respond: () => ({ status: 200, html: fixture('mobile-anzeige.html') }) });
+    const TEASER = { name: 'Kyrylo', userId: '', type: 'Privat', variant: 'teaser',
+        activeDays: null, active: '', satisfaction: 'TOP', reliability: false,
+        friendliness: false, sustainability: '', badges: ['Zufriedenheit: TOP'], rating: 'gut' };
+    win.kbsMem['kbs_v4_cache'] = { '3568052645': { ts: Date.now() - 6 * 3600e3, variant: 'teaser',
+        complete: false, data: TEASER } };
+    await runProcessAll(win, false);
+    assert.equal(win.requests.some(u => /3568052645/.test(u)), false,
+        'auf der mobilen Seite wird der passende Teilauszug wiederverwendet');
+    assert.equal(win.kbsDebug.stats.cached >= 1, true, 'mindestens eine Karte aus dem Cache');
 });
 
 test('Bot-Gegenwehr mit Status 200: Cooldown statt Cache, automatischer Retry erst nach der Pause', async () => {

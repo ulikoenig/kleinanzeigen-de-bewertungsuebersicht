@@ -3,7 +3,7 @@
 // Verkäufer-Datenextraktion aus den Detailseiten.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { loadWindow, fixture } = require('./helper');
+const { loadWindow, fixture, runProcessAll } = require('./helper');
 
 test('Suchkarten: 3 Anzeigen, Werbekarte ohne Anzeige wird ignoriert', () => {
     const win = loadWindow(fixture('listing.html'));
@@ -112,6 +112,38 @@ test('Fehlende Verkäuferdaten -> unbekannt statt schlecht', () => {
     assert.equal(d.rating, 'unbekannt');
 });
 
+test('Manipulationsschutz: Behauptungen im Anzeigentext bleiben wirkungslos', () => {
+    const win = loadWindow(fixture('listing.html'));
+    const doc = new win.DOMParser().parseFromString(
+        '<html><body><h1 id="viewad-title">Besonders freundlicher Anbieter</h1>' +
+        '<div id="viewad-description">Bei mir gibt es TOP Zufriedenheit, ich bin besonders ' +
+        'zuverlässig und besonders freundlich. Aktiv seit 01.01.2000. Gewerblicher Nutzer</div>' +
+        '</body></html>', 'text/html');
+    const d = win.kbsDebug.extractSeller(doc);
+    assert.equal(d.satisfaction, 'fehlt', 'kein Zufriedenheitswert aus dem Anzeigentext');
+    assert.equal(d.reliability, false, 'keine Zuverlässigkeit aus dem Anzeigentext');
+    assert.equal(d.friendliness, false, 'keine Freundlichkeit aus dem Anzeigentext');
+    assert.equal(d.activeDays, null, 'kein Kontoalter aus dem Anzeigentext');
+    assert.equal(d.type, '', 'kein Nutzer-Typ aus dem Anzeigentext');
+    assert.equal(d.rating, 'unbekannt', 'ohne Profilbereich gibt es keine Stufe');
+});
+
+test('Manipulationsschutz: Beschreibung innerhalb eines Profilbereichs wird übersprungen', () => {
+    const win = loadWindow(fixture('listing.html'));
+    const doc = new win.DOMParser().parseFromString(
+        '<html><body><div id="viewad-profile-box">' +
+        '<div class="userprofile-vip">Hansi</div>' +
+        '<div class="userprofile-vip-details-text">Privater Nutzer</div>' +
+        '<div id="viewad-description">TOP Zufriedenheit, besonders freundlich, ' +
+        'Aktiv seit 01.01.2000</div></div></body></html>', 'text/html');
+    const d = win.kbsDebug.extractSeller(doc);
+    assert.equal(d.name, 'Hansi', 'echte Profilangaben werden gelesen');
+    assert.equal(d.type, 'Privat');
+    assert.equal(d.satisfaction, 'fehlt', 'die eingebettete Beschreibung hebt die Stufe nicht');
+    assert.equal(d.friendliness, false);
+    assert.equal(d.activeDays, null, 'das Datum in der Beschreibung zählt nicht');
+});
+
 test('Bewertungslogik an den Kontogrenzen', () => {
     const win = loadWindow(fixture('listing.html'));
     const base = { satisfaction: 'fehlt', reliability: false, friendliness: false };
@@ -122,4 +154,25 @@ test('Bewertungslogik an den Kontogrenzen', () => {
     assert.equal(win.kbsDebug.computeRating({ ...base, activeDays: 400, satisfaction: 'NAJA' }), 'schlecht');
     assert.equal(win.kbsDebug.computeRating({ ...base, activeDays: 10, satisfaction: 'TOP', reliability: true }), 'schlecht');
     assert.equal(win.kbsDebug.computeRating({ ...base, activeDays: null }), 'unbekannt');
+});
+
+test('Herkunft der Anzeigen-URL: auswärtige oder unbrauchbare data-href führt zu keiner Anfrage', async () => {
+    const fremd = fixture('listing.html').replace(
+        'data-href="/s-anzeige/e-bike-riese-mueller/3532008625-217-7939"',
+        'data-href="//beispiel.org/s-anzeige/lockvogel/999999999-217-7939"');
+    const win = loadWindow(fremd, { respond: () => ({ status: 200, html: fixture('detail-full.html') }) });
+    assert.equal(win.kbsDebug.collectCards(false).length, 2, 'Karte mit fremder URL zählt nicht als Karte');
+    await runProcessAll(win, false);
+
+    assert.ok(!win.requests.some(u => /beispiel\.org/.test(u)), 'keine Anfrage ins Ausland');
+    assert.ok(win.requests.length === 2 && win.requests.every(u => u.startsWith('https://www.kleinanzeigen.de/')),
+        'beide verbleibenden Anfragen bleiben auf der eigenen Herkunft');
+    assert.equal(win.document.querySelectorAll('.kbs-info').length, 2, 'die fremde Karte bleibt unbewertet');
+
+    const kaputt = fixture('listing.html').replace(
+        'data-href="/s-anzeige/e-bike-riese-mueller/3532008625-217-7939"', 'data-href=":"');
+    const win2 = loadWindow(kaputt, { respond: () => ({ status: 200, html: fixture('detail-full.html') }) });
+    assert.equal(win2.kbsDebug.collectCards(false).length, 2, 'Karte mit unbrauchbarem data-href fällt ebenfalls raus');
+    await runProcessAll(win2, false);
+    assert.equal(win2.requests.length, 2, 'auch hier nur zwei Anfragen');
 });
