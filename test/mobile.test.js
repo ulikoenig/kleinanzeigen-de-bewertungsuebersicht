@@ -129,3 +129,38 @@ test('Mobilgerät: ein Request gleichzeitig, kleineres Kontingent, längere Paus
     Object.defineProperty(win, 'innerWidth', { value: 1280, configurable: true });
     assert.equal(win.kbsDebug.mobilerBetrieb(), false, 'Desktopbreite bleibt beim Produktionswert');
 });
+
+test('Mobil: Detailseiten werden mit Desktop-Kopf angefragt, damit das Kontoalter nicht fehlt', async () => {
+    // Mobile Karten, desktop-ausgelieferte Detailseite (so misst es das Gerät)
+    const win = loadWindow(fixture('mobile-listing.html'), {
+        respond: () => ({ status: 200, html: fixture('detail-full.html') })
+    });
+    Object.defineProperty(win, 'innerWidth', { value: 390, configurable: true });
+    await runProcessAll(win, false);
+
+    const option = win.requestOptionen[0];
+    assert.ok(option, 'die Anfrage wurde inklusive Köpfe aufgezeichnet');
+    assert.equal(option.headers['user-agent'], win.kbsDebug.config.DESKTOP_UA,
+        'der Desktop-Kopf steht in der Anfrage');
+    const info = win.document.querySelector('.kbs-info');
+    assert.match(info.querySelector('.kbs-chip').textContent, /Jahre? aktiv/,
+        'Kontoalter ist da, obwohl die Suchseite mobil ausgeliefert wurde');
+
+    // Abschaltbar: ohne Schalter kein eigener Kopf
+    const aus = loadWindow(fixture('mobile-listing.html'), {
+        config: { UA_DESKTOP_FUER_DETAILSEITEN: false },
+        respond: () => ({ status: 200, html: fixture('detail-full.html') })
+    });
+    Object.defineProperty(aus, 'innerWidth', { value: 390, configurable: true });
+    await runProcessAll(aus, false);
+    assert.equal(aus.requestOptionen[0].headers['user-agent'], undefined,
+        'ohne Schalter bleibt der eigene Kopf weg');
+
+    // Am Desktop braucht es den Trick nicht
+    const desktop = loadWindow(fixture('listing.html'), {
+        respond: () => ({ status: 200, html: fixture('detail-full.html') })
+    });
+    await runProcessAll(desktop, false);
+    assert.equal(desktop.requestOptionen[0].headers['user-agent'], undefined,
+        'desktop-ausgelieferte Seiten behalten ihren Kopf');
+});

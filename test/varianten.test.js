@@ -50,3 +50,28 @@ test('Der Baustein verweigert die Arbeit, wenn die Quelle selbst Update-Zeilen e
     }
 });
 
+test('Der UserScript-Kopf ist unverändert gültig (Grant-Namen, Version)', () => {
+    const text = fs.readFileSync(SCRIPT_QUELLE, 'utf8');
+    const kopf = (text.match(/^\/\/ ==UserScript==\n([\s\S]*?)^\/\/ ==\/UserScript==/m) || [])[1];
+    assert.ok(kopf, 'der Metadaten-Block fehlt');
+
+    const grants = (kopf.match(/^\/\/ @grant\s+(\S+)\s*$/gm) || [])
+        .map(z => z.replace(/^\/\/ @grant\s+/, ''));
+    assert.deepEqual(grants, ['GM_xmlhttpRequest', 'GM_setValue', 'GM_getValue', 'GM_registerMenuCommand'],
+        'genau diese vier Manager-Funktionen werden gebraucht');
+    // Kein Manager-Namen darf einen Umlaut enthalten (Schreibmaschinen-Umbau räumte schon einmal
+    // @grant-Zeilen kaputt, ohne dass ein Test es merkte).
+    grants.forEach(g => assert.match(g, /^[A-Za-z_]+$/, 'Grant-Name "' + g + '" ist verstümmelt'));
+
+    // Jeder im Code benutzte GM_-Name muss eingetragen sein
+    const benutzt = new Set((text.match(/GM_[A-Za-z]+/g) || [])
+        .filter(n => !kopf.includes(n)));
+    for (const name of benutzt) {
+        assert.ok(grants.includes(name), name + ' wird benutzt, ist aber nicht @grant');
+    }
+
+    // Versionsangabe in Skript und Paketmustek stimmen überein
+    const skriptVersion = (kopf.match(/^\/\/ @version\s+(\S+)\s*$/m) || [])[1];
+    const paket = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    assert.equal(paket.version, skriptVersion + '.0', 'package.json und @version laufen auseinander');
+});

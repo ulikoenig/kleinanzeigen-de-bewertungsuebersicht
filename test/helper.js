@@ -66,9 +66,11 @@ function loadWindow(html, opts = {}) {
     win.kbsMem = mem;
 
     win.requests = [];
+    win.requestOptionen = [];
     if (opts.respond) {
         win.GM_xmlhttpRequest = (o) => {
             win.requests.push(o.url);
+            win.requestOptionen.push(o);            // für Header-Prüfungen
             const res = opts.respond(o.url);
             setTimeout(() => {
                 if (res === null) { o.onerror && o.onerror({ status: 0 }); return; }

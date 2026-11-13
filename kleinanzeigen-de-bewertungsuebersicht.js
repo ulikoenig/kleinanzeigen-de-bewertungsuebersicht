@@ -7,9 +7,9 @@
 // @match        https://www.kleinanzeigen.de/*
 // @run-at       document-idle
 // @noframes
-// @grant        GM_xmlhttpReqüst
-// @grant        GM_setValü
-// @grant        GM_getValü
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
 // @grant        GM_registerMenuCommand
 // @connect      www.kleinanzeigen.de
 // @license      GPL-3.0-or-later
@@ -75,6 +75,13 @@
         BACKOFF_BASE: 4000,      // ms: erste Pause nach einem Netzfehler
         BACKOFF_MAX: 300000,     // ms: oberste Grenze der gestaffelten Pause
         MAX_FAILED_SERIES: 5,    // so viele Fehlschläge hintereinander, dann Abbruch
+        DESKTOP_UA: 'Mozilla/5.0 (X11; Linux x86_64; rv:132.0) Gecko/20100101 Firefox/132.0',
+        UA_DESKTOP_FUER_DETAILSEITEN: true,
+            // Die mobil ausgelieferte Detailseite enthält kein Kontoalter (nur den
+            // userprofile-teaser). Auf dem Gerät gemessen (Tampermonkey 5.5.0, Firefox
+            // 157, Android 15): ein eigener user-agent-Wert kommt beim Server an, und
+            // dieselbe Anzeige liefert dann das klassische Profilmarkup mit „Aktiv seit“.
+            // Nur im GM-Pfad – der fetch-Fallback im Seitenkontext darf den Kopf nicht ändern.
         CACHE_TTL_INCOMPLETE_HOURS: 24 // unvollständiger Auszug (z. B. mobil ohne
                                        // Kontoalter) wird deutlich kürzer gehalten
     };
@@ -482,6 +489,21 @@
         return new Promise(resolve => {
             const finish = (doc, status) => resolve({ doc, status });
 
+            // Nur was nachweislich ankommt: `referer` und `user-agent` nennt die
+            // Tampermonkey-Doku als setzbar (auf Safari teils eingeschränkt).
+            // `Sec-Fetch-*` sind verbotene Request-Header und werden vom Browser
+            // gesetzt, nicht vom Skript - hier also weggelassen.
+            const koepfe = {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+                'referer': referer || location.href
+            };
+            // Mobil ausgelieferte Detailseiten lassen das Kontoalter weg; über den
+            // Manager lässt sich derselbe Inhalt wie am Desktop holen.
+            if (CONFIG.UA_DESKTOP_FUER_DETAILSEITEN && mobilerBetrieb()) {
+                koepfe['user-agent'] = CONFIG.DESKTOP_UA;
+            }
+
             if (typeof GM_xmlhttpRequest === 'function') {
                 GM_xmlhttpRequest({
                     method: 'GET',
@@ -491,11 +513,7 @@
                     // Tampermonkey-Doku als setzbare Header (auf Safari und Android-Browsern
                     // teils eingeschränkt). `Sec-Fetch-*` sind verbotene Request-Header und
                     // werden vom Browser übernommen, nicht vom Skript - hier also weggelassen.
-                    headers: {
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-                        'referer': referer || location.href
-                    },
+                    headers: koepfe,
                     onload: r => {
                         if (r.status === 200) {
                             try {
@@ -695,7 +713,7 @@
     function cardInfoHost(card) {
         // Neue Oberfläche: die Spalte mit Titel/Preis, niemals die Bildspalte.
         // Achtung: beide Spalten tragen `basis-*`-Klassen (gemessen an einer echten
-        // Suchseite: 27/27 Karten), die Bildspalte steht zürst – ein pauschales
+        // Suchseite: 27/27 Karten), die Bildspalte steht zuerst – ein pauschales
         // /basis-/ Muster erwischt also immer das Thumbnail.
         const article = artikelElement(card);
         if (article) {
