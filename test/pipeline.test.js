@@ -365,3 +365,52 @@ test('Leeres Ergebnis ohne Blockseite: weicher Fehler, kein Cache, Retry nur bei
     assert.ok(!mem(win)['kbs_v4_cooldown'], 'automatischer Lauf ohne Blockseite bleibt cooldown-frei');
     assert.equal(win.kbsDebug.collectCards(true).length, 3, ' Retry nur bei manuellem Start');
 });
+
+test('Anzeige nennt Erhebungszeitpunkt und Wiederverwendungsdauer', async () => {
+    const win = loadWindow(fixture('listing.html'), { respond: responder() });
+    await runProcessAll(win, false);
+
+    const chip = win.document.querySelector('.kbs-chip');
+    assert.match(chip.title, /Bewertet am \d{2}\.\d{2}\.\d{4}/, 'Datum der Bewertung');
+    assert.match(chip.title, /wiederverwendbar bis \d{2}\.\d{2}\.\d{4}/, 'bis wann die Angabe gilt');
+
+    // Zwei Tage alter Cache-Eintrag: die Anzeige nennt weiter den alten Zeitpunkt.
+    const vorzwei = Date.now() - 2 * 864e5;
+    const cache = win.kbsMem['kbs_v4_cache'];
+    for (const k of Object.keys(cache)) {
+        cache[k].ts = vorzwei;
+        cache[k].bis = vorzwei + 5 * 864e5;
+        cache[k].data.bewertetAm = vorzwei;
+        cache[k].data.gueltigBis = vorzwei + 5 * 864e5;
+    }
+    win.document.querySelectorAll('.kbs-info').forEach(el => el.remove());
+    await runProcessAll(win, false);
+
+    const tag = new Date(vorzwei);
+    const erwartet = String(tag.getDate()).padStart(2, '0') + '.' +
+        String(tag.getMonth() + 1).padStart(2, '0') + '.' + tag.getFullYear();
+    const wieder = win.document.querySelector('.kbs-chip');
+    assert.ok(wieder.title.includes('Bewertet am ' + erwartet),
+        'der alte Erhebungszeitpunkt bleibt ablesbar, nicht „heute“');
+    assert.match(wieder.title, /aus Cache/, 'und es ist als Wiederverwendung gekennzeichnet');
+});
+
+test('Cache-Schreiben ist gebündelt, nicht pro Karte', async () => {
+    const win = loadWindow(fixture('mobile-listing.html'), {
+        respond: () => ({ status: 200, html: fixture('mobile-anzeige.html') })
+    });
+    let cacheSchreibvorgaenge = 0;
+    const vorher = win.GM_setValue;
+    win.GM_setValue = (k, v) => { if (k === 'kbs_v4_cache') cacheSchreibvorgaenge++; return vorher(k, v); };
+
+    await runProcessAll(win, false);
+    assert.equal(win.requests.length, 3, 'drei Karten wurden geladen');
+    assert.equal(cacheSchreibvorgaenge, 1, 'ein Schreiben am Laufende statt drei');
+    assert.equal(Object.keys(win.kbsMem['kbs_v4_cache']).length, 3, 'der Inhalt ist vollständig');
+
+    win.GM_setValue = vorher;
+    win.document.querySelectorAll('.kbs-info').forEach(el => el.remove());
+    const anfragenVorher = win.requests.length;
+    await runProcessAll(win, false);
+    assert.equal(win.requests.length, anfragenVorher, 'der geschriebene Bestand wird im Folgeauf wiederverwendet');
+});

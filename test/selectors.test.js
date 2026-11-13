@@ -182,3 +182,59 @@ test('Herkunft der Anzeigen-URL: auswärtige oder unbrauchbare data-href führt 
     await runProcessAll(win2, false);
     assert.equal(win2.requests.length, 2, 'auch hier nur zwei Anfragen');
 });
+
+test('Datumsauswertung: unsinnige und zukünftige Daten liefern kein Kontoalter', () => {
+    const win = loadWindow(fixture('listing.html'));
+    assert.equal(win.kbsDebug.parseGermanDate('31.02.2024'), null, 'der 31. Februar existiert nicht');
+    assert.equal(win.kbsDebug.parseGermanDate('00.05.2021'), null, 'der 0. Mai existiert nicht');
+    assert.equal(win.kbsDebug.parseGermanDate('32.13.2021'), null, 'Monat 13 existiert nicht');
+    assert.equal(win.kbsDebug.parseGermanDate('01.01.2999'), null, 'ein Konto in der Zukunft ist kein Beweis');
+    const gut = win.kbsDebug.parseGermanDate('Aktiv seit 04.06.2020');
+    assert.ok(gut, 'ein normales Datum wird erkannt');
+    assert.equal(gut.getFullYear(), 2020);
+    assert.equal(gut.getMonth(), 5);
+    assert.equal(gut.getDate(), 4);
+    assert.equal(win.kbsDebug.daysSince(null), null);
+    // Und die Stufe bleibt bei fehlendem Kontoalter unbekannt, nicht schlecht
+    assert.equal(win.kbsDebug.computeRating({ satisfaction: 'fehlt', reliability: false,
+        friendliness: false, activeDays: null }), 'unbekannt');
+});
+
+test('Das gelesene Konto-Datum wird angezeigt, nicht ein zurückgerechnetes', () => {
+    const win = loadWindow(fixture('listing.html'));
+    const doc = new win.DOMParser().parseFromString(fixture('detail-full.html'), 'text/html');
+    const d = win.kbsDebug.extractSeller(doc);
+    assert.equal(typeof d.activeSince, 'number', 'das Kontoalter bleibt als Datum erhalten');
+    const gelesen = new Date(d.activeSince);
+        // Das Fixture nennt "Aktiv seit 04.06.2020".
+assert.equal(gelesen.getDate(), 4);
+    assert.equal(gelesen.getMonth(), 5);
+    assert.equal(gelesen.getFullYear(), 2020);
+
+    const [karte] = win.kbsDebug.collectCards(false);
+    win.kbsDebug.renderBadge(karte, d);
+    const meta = karte.querySelector('.kbs-meta').textContent;
+    assert.equal(meta, 'seit 04.06.2020', 'die Anzeige nennt das gelesene Datum');
+    assert.match(karte.querySelector('.kbs-chip').title, /Konto seit 04\.06\.2020/);
+});
+
+test('Stufe ist auch ohne Farbe unterscheidbar (Symbol und Wort)', () => {
+    const win = loadWindow(fixture('listing.html'));
+    const [karte] = win.kbsDebug.collectCards(false);
+    const erwartungen = [
+        ['schlecht', /\u2715 schlecht/],
+        ['mittel', /! mittel/],
+        ['unbekannt', /\? unbekannt/],
+        ['gut', /\u2713 gut/]
+    ];
+    for (const [stufe, muster] of erwartungen) {
+        win.kbsDebug.renderBadge(karte, { rating: stufe, satisfaction: 'fehlt', badges: [],
+            activeDays: null, active: '', type: '', name: '', reliability: false,
+            friendliness: false, sustainability: '' });
+        const info = karte.querySelector('.kbs-info');
+        assert.match(info.querySelector('.kbs-stufe').textContent, muster,
+            'Stufenwort bei "' + stufe + '"');
+        assert.match(info.getAttribute('aria-label'), new RegExp(stufe), 'aria-label nennt die Stufe');
+        assert.ok(info.classList.contains('kbs-' + stufe), 'Farbklasse bleibt erhalten');
+    }
+});

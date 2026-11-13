@@ -43,7 +43,7 @@ const geoeffnete = [];
 function schliessen() {
     while (geoeffnete.length) {
         const dom = geoeffnete.pop();
-        try { dom.window.close(); } catch (e) { /* egal */ }
+        try { dom.window.close(); } catch { /* egal */ }
     }
 }
 

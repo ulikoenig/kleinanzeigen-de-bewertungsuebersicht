@@ -10,6 +10,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_registerMenuCommand
 // @connect      www.kleinanzeigen.de
 // @license      GPL-3.0-or-later
 // ==/UserScript==
@@ -92,7 +93,7 @@
             }
             const raw = localStorage.getItem(name);
             return raw === null ? fallback : JSON.parse(raw);
-        } catch (e) {
+        } catch {
             return fallback;
         }
     }
@@ -102,18 +103,49 @@
     function todayUsed()   { return getCount(dayKey(), 0); }
     function bumpToday()   { store(dayKey(), todayUsed() + 1); }
 
-    function getCache()    { return load(NS + 'cache', {}); }
-    function putCache(k, v) {
-        const c = getCache();
-        c[k] = v;
-        // Cache nebenbei von altem Ballast befreien
+    // Der Ergebnis-Cache wird pro Lauf einmal gelesen und dann gebündelt
+    // zurückgeschrieben. Vorher wurde bei jeder Karte der komplette Speicher
+    // (bis zu mehreren tausend Einträgen) gelesen und neu serialisiert.
+    let cachePuffer = null;
+    let cacheSchmutzig = false;
+    let cacheSeitSchreiben = 0;
+
+    function getCache() {
+        if (!cachePuffer) cachePuffer = load(NS + 'cache', {});
+        return cachePuffer;
+    }
+
+    function cacheSaeubern(c) {
         const cutoff = Date.now() - CONFIG.CACHE_TTL_DAYS * 864e5;
         for (const id of Object.keys(c)) {
             if (!c[id] || (c[id].ts || 0) < cutoff) delete c[id];
         }
-        store(NS + 'cache', c);
     }
-    function clearCache()  { store(NS + 'cache', {}); }
+
+    function putCache(k, v) {
+        const c = getCache();
+        c[k] = v;
+        cacheSaeubern(c);
+        cacheSchmutzig = true;
+        cacheSeitSchreiben++;
+        // Zwischendurch schreiben, damit ein abgebrochener Lauf nicht alles
+        // Verarbeitete kostet.
+        if (cacheSeitSchreiben >= 8) schreibeCache();
+    }
+
+    function schreibeCache() {
+        if (!cacheSchmutzig) return;
+        store(NS + 'cache', getCache());
+        cacheSchmutzig = false;
+        cacheSeitSchreiben = 0;
+    }
+
+    function clearCache() {
+        cachePuffer = {};
+        cacheSchmutzig = false;
+        cacheSeitSchreiben = 0;
+        store(NS + 'cache', {});
+    }
 
     function cooldownUntil() { return Number(load(NS + 'cooldown', 0)) || 0; }
     function setCooldown()   { store(NS + 'cooldown', Date.now() + CONFIG.COOLDOWN_MINUTES * 60000); }
@@ -124,14 +156,29 @@
     function parseGermanDate(text) {
         const m = clean(text).match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
         if (!m) return null;
-        const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
-        return isNaN(d) ? null : d;
+        const tag = Number(m[1]), monat = Number(m[2]), jahr = Number(m[3]);
+        const d = new Date(jahr, monat - 1, tag);
+        // Rückwärtskontrolle: `new Date(2024, 1, 31)` rollt lautlos auf den 2. März,
+        // `isNaN` greift dabei nie. Ohne diese Prüfung entsteht aus Unsinn ein Datum.
+        if (isNaN(d.getTime()) || d.getFullYear() !== jahr ||
+            d.getMonth() !== monat - 1 || d.getDate() !== tag) return null;
+        // Ein Konto, das erst in der Zukunft angelegt worden sein will, ist kein Beweis.
+        if (d.getTime() > Date.now()) return null;
+        return d;
     }
 
     function daysSince(date) {
         if (!date) return null;
         const diff = Date.now() - date.getTime();
         return diff < 0 ? 0 : Math.floor(diff / 864e5);
+    }
+
+    // Deutsches Datum ohne ICU-Glück: toLocaleDateString('de-DE') liefert je nach
+    // Umgebung "4.6.2020" oder "04.06.2020".
+    function datumDe(ms) {
+        const d = new Date(ms);
+        return String(d.getDate()).padStart(2, '0') + '.' +
+            String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
     }
 
     function formatActive(days) {
@@ -227,6 +274,7 @@
             type: '',
             variant: '',
             activeDays: null,
+            activeSince: null,
             active: '',
             satisfaction: 'fehlt',
             reliability: false,
@@ -353,6 +401,7 @@
         if (activeTxt) {
             const date = parseGermanDate(activeTxt);
             d.activeDays = daysSince(date);
+            d.activeSince = date ? date.getTime() : null;
             d.active = formatActive(d.activeDays) || clean(activeTxt);
         }
 
@@ -424,7 +473,7 @@
                         if (r.status === 200) {
                             try {
                                 finish(new DOMParser().parseFromString(r.responseText, 'text/html'), r.status);
-                            } catch (e) {
+                            } catch {
                                 finish(null, r.status);
                             }
                         } else {
@@ -483,7 +532,7 @@
     function injectStyles() {
         if (document.getElementById('kbs-style')) return;
         const css = `
-            .kbs-info { display: block; margin-top: 8px; }
+            .kbs-info { display: block; margin-top: 8px; max-width: 100%; }
             .kbs-chip {
                 display: inline-block;
                 font-size: 11px; font-weight: 600; line-height: 1.4;
@@ -492,6 +541,19 @@
                 background: #e9ecef;
             }
             .kbs-meta { color: #555; font-size: 11px; margin-left: 6px; }
+            .kbs-stufe { font-size: 11px; font-weight: 700; margin-right: 6px; }
+            .kbs-info.kbs-gut .kbs-stufe { color: #1b6e2a; }
+            .kbs-info.kbs-mittel .kbs-stufe { color: #8a6d1a; }
+            .kbs-info.kbs-schlecht .kbs-stufe { color: #a1121f; }
+            .kbs-info.kbs-unbekannt .kbs-stufe { color: #555; }
+            /* Enge Karten (mobile Auslieferung, schmales Browserfenster): der Chip
+               bricht innerhalb der Textspalte um und verdraengt weder Bild noch Preis. */
+            .kbs-chip { max-width: 100%; overflow-wrap: anywhere; }
+            @media (max-width: 720px) {
+                .kbs-chip { font-size: 10px; padding: 2px 7px; }
+                .kbs-meta { display: block; margin-left: 0; }
+                .kbs-info { margin-top: 6px; }
+            }
             .kbs-info.kbs-gut      .kbs-chip { background:#d4edda; border-color:#28a745; }
             .kbs-info.kbs-mittel   .kbs-chip { background:#fff3cd; border-color:#ffc107; }
             .kbs-info.kbs-schlecht .kbs-chip { background:#f8d7da; border-color:#dc3545; }
@@ -513,7 +575,18 @@
                 position: fixed; left: 12px; bottom: 12px; z-index: 2147483647;
                 background: #222; color: #fff; font: 12px/1.5 system-ui, sans-serif;
                 padding: 6px 10px; border-radius: 6px; opacity: .9;
+                display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+                max-width: calc(100vw - 24px);
             }
+            #kbs-status .kbs-text { flex: 1 1 auto; }
+            #kbs-status .kbs-aktionen { display: flex; gap: 6px; flex: 0 0 auto; }
+            #kbs-status .kbs-knopf {
+                font: 12px/1.2 system-ui, sans-serif; color: #fff;
+                background: #444; border: 1px solid #777; border-radius: 5px;
+                /* Touch-Zielgröße: auf dem Handy nicht deutlich unter 40 px Höhe */
+                padding: 10px 12px; min-height: 40px; min-width: 44px; cursor: pointer;
+            }
+            #kbs-status .kbs-knopf:hover { background: #555; }
         `;
         const style = document.createElement('style');
         style.id = 'kbs-style';
@@ -523,7 +596,6 @@
 
     let statusEl = null;
     let statusTimer = null;
-    let statusBleibt = false;
 
     // Eine Sperung (Cooldown, Tageslimit) ist wichtiger als eine Statistikmeldung:
     // sie bleibt stehen, und kein abgelaufener Timer einer aelteren Meldung darf sie
@@ -532,17 +604,65 @@
         if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
         if (!msg) {
             if (statusEl) { statusEl.remove(); statusEl = null; }
-            statusBleibt = false;
             return;
         }
         if (!statusEl) {
             statusEl = document.createElement('div');
             statusEl.id = 'kbs-status';
+            const text = document.createElement('span');
+            text.className = 'kbs-text';
+            statusEl.appendChild(text);
             document.body.appendChild(statusEl);
         }
-        statusEl.textContent = msg;
-        statusBleibt = !!bleibt;
+        statusEl.querySelector('.kbs-text').textContent = msg;
+        steuerungEinblenden();
         if (!bleibt) statusTimer = setTimeout(() => setStatus(''), 10000);
+    }
+
+    // Aktionen, die sonst nur über die Tastatur erreichbar sind. Auf dem Handy gibt
+    // es keine Tastatur: Strg+F8 und Strg+Shift+F8 sind dort unbenutzbar, also
+    // brauchen dieselben Vorgänge einen Touch-Zugang (Bedienfeld und Manager-Menü).
+    function zuruecksetzen() {
+        clearCache();
+        store(dayKey(), 0);
+        store(NS + 'cooldown', 0);
+        if (cooldownTimer) { clearTimeout(cooldownTimer); cooldownTimer = null; }
+        setStatus('Cache und Tageszähler geleert. „Prüfen“ drücken oder Seite neu laden.', true);
+        log('Cache + Zähler geleert.');
+    }
+
+    function steuerungEinblenden() {
+        if (!statusEl || statusEl.querySelector('.kbs-aktionen')) return;
+        const feld = document.createElement('span');
+        feld.className = 'kbs-aktionen';
+        const knopf = (text, titel, handler) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'kbs-knopf';
+            b.textContent = text;
+            b.title = titel;
+            b.setAttribute('aria-label', titel);
+            b.addEventListener('click', ev => { ev.preventDefault(); handler(); });
+            feld.appendChild(b);
+        };
+        knopf('Prüfen', 'Verkäuferbewertungen jetzt prüfen (auch fehlgeschlagene Karten)', () => processAll(true));
+        knopf('Stopp', 'Abarbeitung anhalten', stop);
+        knopf('Zurücksetzen', 'Cache und Tageszähler löschen', zuruecksetzen);
+        statusEl.appendChild(feld);
+    }
+
+    function menueBefehle() {
+        if (typeof GM_registerMenuCommand !== 'function') return false;
+        try {
+            GM_registerMenuCommand('Jetzt prüfen', () => processAll(true));
+            GM_registerMenuCommand('Abarbeitung stoppen', stop);
+            GM_registerMenuCommand('Cache und Tageszähler löschen', zuruecksetzen);
+            GM_registerMenuCommand('Fehlersuche einschalten', fehlersucheEinschalten);
+            return true;
+        } catch (e) {
+            warn('Menübefehle nicht nutzbar:', e);
+            return false;
+        }
     }
 
     function cardInfoHost(card) {
@@ -550,7 +670,7 @@
         // Achtung: beide Spalten tragen `basis-*`-Klassen (gemessen an einer echten
         // Suchseite: 27/27 Karten), die Bildspalte steht zuerst – ein pauschales
         // /basis-/ Muster erwischt also immer das Thumbnail.
-        const article = card.matches('article') ? card : card.querySelector('article[data-adid]');
+        const article = artikelElement(card);
         if (article) {
             const cols = Array.from(article.children).filter(el => el.tagName === 'DIV');
             const heads = cols.filter(el => el.querySelector('h2, h3, [class*="headline"]'));
@@ -570,6 +690,10 @@
             || card.querySelector('.aditem-main')
             || card;
     }
+
+    const STUFE_TEXT = {
+        gut: '✓ gut', mittel: '! mittel', schlecht: '✕ schlecht', unbekannt: '? unbekannt'
+    };
 
     function renderBadge(card, d) {
         const host = cardInfoHost(card);
@@ -598,18 +722,36 @@
             'Stufe: ' + d.rating.toUpperCase(),
             d.name ? 'Verkäufer: ' + d.name : '',
             d.activeDays !== null ? 'Kontoalter: ' + d.activeDays + ' Tage' + when : 'Kontoalter unbekannt',
+            typeof d.activeSince === 'number' ? 'Konto seit ' + datumDe(d.activeSince) : '',
+            typeof d.bewertetAm === 'number'
+                ? 'Bewertet am ' + datumDe(d.bewertetAm) +
+                  (typeof d.gueltigBis === 'number'
+                      ? ', Angabe wiederverwendbar bis ' + datumDe(d.gueltigBis) : '')
+                : '',
             d.badges.length ? 'Abzeichen: ' + d.badges.join(', ') : 'keine Abzeichen',
             d.failed ? 'Fehlergrund: ' +
                 (typeof d.failStatus === 'number' ? 'HTTP ' + d.failStatus : d.failStatus) +
                 '\nErneut versuchen: Strg+F8' : ''
         ].filter(Boolean).join('\n');
 
+        // Stufe nicht nur über die Farbe: für rot-grün-sehschwache Nutzer sind
+        // Grün und Rot kaum zu unterscheiden, und ohne Text lässt sich die Stufe
+        // auch nicht vorlesen.
+        const stufe = document.createElement('span');
+        stufe.className = 'kbs-stufe';
+        stufe.textContent = STUFE_TEXT[d.rating] || d.rating;
+        row.setAttribute('aria-label', 'Verkäufer-Bewertung: ' + (d.rating || 'unbekannt'));
+        row.appendChild(stufe);
         row.appendChild(chip);
         if (d.activeDays !== null) {
             const meta = document.createElement('span');
             meta.className = 'kbs-meta';
-            meta.textContent = 'seit ' + new Date(Date.now() - d.activeDays * 864e5)
-                .toLocaleDateString('de-DE');
+            // Das von der Seite gelesene Datum statt einer zurückgerechneten Näherung:
+            // die Rundung der Tageszahl konnte um bis zu zwei Tage daneben liegen.
+            const seit = typeof d.activeSince === 'number'
+                ? d.activeSince
+                : Date.now() - d.activeDays * 864e5;
+            meta.textContent = 'seit ' + datumDe(seit);
             row.appendChild(meta);
         }
         host.appendChild(row);
@@ -619,8 +761,16 @@
     }
 
     // -------------------------- Karten sammeln / abarbeiten -------------------
+    // Der Karteninhalt steckt je nach Auslieferung in einem article-Element; alle
+    // drei Zugriffe (ID, Detail-URL, Einfügeort) brauchen denselben Knoten.
+    function artikelElement(karte) {
+        if (karte.matches && karte.matches('article[data-adid], article[data-href]')) return karte;
+        return karte.querySelector &&
+            karte.querySelector('article[data-adid], article[data-href]');
+    }
+
     function getAdId(card) {
-        const article = card.matches('article[data-adid]') ? card : card.querySelector('article[data-adid]');
+        const article = artikelElement(card);
         if (article && article.dataset.adid) return article.dataset.adid;
         const a = card.querySelector('a[href*="/s-anzeige/"]');
         const m = a && a.href.match(/\/(\d{6,})-\d+/);
@@ -628,7 +778,7 @@
     }
 
     function getDetailUrl(card) {
-        const artikel = card.matches('article[data-href]') ? card : card.querySelector('article[data-href]');
+        const artikel = artikelElement(card);
         if (artikel && artikel.dataset.href) {
             // data-href ist Seitengabe: eine protokollrelative oder auswärtige Angabe
             // würde sonst ins Ausland getragen (@connect bremst nur den GM-Pfad, der
@@ -637,7 +787,7 @@
                 const url = new URL(artikel.dataset.href, location.origin);
                 if (url.origin === location.origin) return url.href;
                 warn('Karte übersprungen: data-href zeigt auf fremde Herkunft', url.origin);
-            } catch (e) {
+            } catch {
                 warn('Karte übersprungen: unbrauchbares data-href', artikel.dataset.href);
             }
             return '';
@@ -647,7 +797,6 @@
     }
 
     function collectCards(force) {
-        const seen = new Set();
         const out = [];
         document.querySelectorAll(CARD_SELECTOR).forEach(el => {
             // Nur Karten mit Anzeigenbezug
@@ -655,8 +804,6 @@
             if (!url || !/\/s-anzeige\//.test(url)) return;
             const done = el.querySelector('.kbs-info:not(.kbs-failed)');
             if (done || (!force && el.querySelector('.kbs-info'))) return;
-            if (seen.has(el)) return;
-            seen.add(el);
             out.push(el);
         });
         return out;
@@ -675,7 +822,8 @@
     // Karte. Ein handgeschriebenes Teillobject wuerde in renderBadge erneut werfen.
     function failedData(status) {
         return {
-            name: '', userId: '', type: '', variant: '', activeDays: null, active: '',
+            name: '', userId: '', type: '', variant: '', activeDays: null, activeSince: null,
+            active: '',
             satisfaction: 'fehlt', reliability: false, friendliness: false,
             sustainability: '', badges: [], rating: 'unbekannt',
             failed: true, failStatus: status
@@ -684,10 +832,11 @@
 
     async function handleCard(card, index, total) {
         const adId = getAdId(card) || ('url_' + getDetailUrl(card));
-        const cache = getCache();
         const hit = cacheHit(adId, card);
         if (hit) {
             hit.data.cached = true;
+            hit.data.bewertetAm = hit.ts;
+            hit.data.gueltigBis = hit.bis || null;
             renderBadge(card, hit.data);
             stats.cached++;
             return 'cached';
@@ -745,10 +894,17 @@
             data.failStatus = 'keine Verkäuferdaten';
             warn('Keine Verkäuferdaten erkannt:', getDetailUrl(card));
         } else {
+            const jetzt = Date.now();
+            const vollstaendig = typeof data.activeDays === 'number';
+            data.bewertetAm = jetzt;
+            data.gueltigBis = jetzt + (vollstaendig
+                ? CONFIG.CACHE_TTL_DAYS * 864e5
+                : CONFIG.CACHE_TTL_INCOMPLETE_HOURS * 3600e3);
             putCache(adId, {
-                ts: Date.now(),
+                ts: jetzt,
+                bis: data.gueltigBis,
                 variant: data.variant,
-                complete: typeof data.activeDays === 'number',
+                complete: vollstaendig,
                 data
             });
         }
@@ -756,6 +912,31 @@
         log('✓', adId, data.rating, '|', data.type || '?', '|', data.satisfaction,
             '|', data.active || 'kein Datum', '|', todayUsed() + '/' + CONFIG.MAX_PER_DAY);
         return data.failed ? 'soft' : 'ok';
+    }
+
+    // Mobilgeraete liefern eine schmalere Karte, haengen oft an Funkverbindungen und
+    // haben keine Tastatur. Deshalb dort: ein Request gleichzeitig, kleineres
+    // Tageskontingent, laengere Pausen. Die Zahlen sind bewusst konservativ gewaehlt,
+    // weil der Geraetbefund (T45) noch aussteht; ueber "Zuruecksetzen" sind sie
+    // im Betrieb wieder einfangbar.
+    function mobilerBetrieb() {
+        try {
+            if (typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches) return true;
+        } catch { /* egal */ }
+        const breit = window.innerWidth || 0;
+        return breit > 0 && breit <= 720;
+    }
+
+    function gerateEinstellungen() {
+        if (!mobilerBetrieb()) return false;
+        CONFIG.CONCURRENCY = 1;
+        CONFIG.MAX_PER_DAY = Math.min(CONFIG.MAX_PER_DAY, 150);
+        CONFIG.DELAY_MIN = Math.max(CONFIG.DELAY_MIN, 900);
+        CONFIG.DELAY_MAX = Math.max(CONFIG.DELAY_MAX, 2400);
+        CONFIG.BACKOFF_BASE = Math.max(CONFIG.BACKOFF_BASE, 8000);
+        log('Mobilbetrieb erkannt: 1 Anfrage gleichzeitig, maximal', CONFIG.MAX_PER_DAY,
+            'Details am Tag, Pausen', CONFIG.DELAY_MIN + '-' + CONFIG.DELAY_MAX, 'ms');
+        return true;
     }
 
     function looksLikeListing(force) {
@@ -779,6 +960,12 @@
             return;
         }
         if (force) store(NS + 'cooldown', 0);
+
+        // Pro Lauf wird der Cache frisch aus dem Speicher gelesen: sonst arbeitet der
+        // Puffer eines früheren Laufs weiter (auch gegen über die Tastatur gelöschte
+        // oder von außen geänderte Bestände).
+        schreibeCache();
+        cachePuffer = null;
 
         let cards = collectCards(force);
         if (!cards.length) {
@@ -846,6 +1033,7 @@
             await Promise.all(Array.from({ length: Math.min(CONFIG.CONCURRENCY, cards.length) }, worker));
         } finally {
             running = false;
+            schreibeCache();
         }
 
         const hinweise = [];
@@ -917,11 +1105,7 @@
         if (e.key === 'F8' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             if (e.shiftKey) {
-                clearCache();
-                store(dayKey(), 0);
-                store(NS + 'cooldown', 0);
-                setStatus('Cache und Tageszähler geleert.');
-                log('Cache + Zähler geleert.');
+                zuruecksetzen();
             } else if (running) {
                 stop();
             } else {
@@ -930,21 +1114,48 @@
         }
     });
 
-    // Debug-/Pflegemöglichkeit für Tests (kein Einfluss auf den Betrieb)
-    try {
+    // Debug-/Pflegemöglichkeit: nur nach bewusster Freigabe, nicht im Normalbetrieb.
+    // In Tampermonkeys Sandbox ist ein auf `window` gelegtes Objekt ohnehin nicht von
+    // der Seitenkonsole aus erreichbar; nutzbar ist es im Skriptkontext (Tampermonkey:
+    // „Inhalt im Seitenkontext ausführen“, oder die Konsole des Skript-Editors) und im
+    // Testbetrieb. Freigabe über die Adresse (#kbs-debug) oder den Menüpunkt
+    // „Fehlersuche einschalten“.
+    function debugFreigegeben() {
+        if (window.kbsDebugOnly) return true;                        // Testbetrieb
+        if (/[?&#]kbs-debug/.test(location.href)) return true;        // URL-Freigabe
+        try { return !!load(NS + 'debug', false); } catch { return false; }
+    }
+
+    function fehlersucheEinschalten() {
+        store(NS + 'debug', true);
+        log('Fehlersuche eingeschaltet. Seite neu laden, dann steht kbsDebug bereit.');
+        setStatus('Fehlersuche eingeschaltet – bitte Seite neu laden.', true);
+    }
+
+    if (debugFreigegeben()) {
+      try {
         window.kbsDebug = {
             config: CONFIG,
             extractSeller, computeRating, collectCards, renderBadge, looksLikeListing,
-            getDetailUrl, getAdId, formatActive, parseGermanDate, daysSince,
-            clearCache, processAll, stop, stats
+            getDetailUrl, getAdId, artikelElement, schreibeCache,
+            formatActive, parseGermanDate, daysSince, datumDe,
+            clearCache, processAll, stop, stats, zuruecksetzen, steuerungEinblenden, menueBefehle,
+            gerateEinstellungen, mobilerBetrieb, debugFreigegeben
         };
-    } catch (e) { /* egal */ }
+      } catch { /* egal */ }
+    }
 
     if (!window.kbsDebugOnly) {
+        gerateEinstellungen();
+        // Der Beobachter laeuft von Anfang an: bei der mobilen Auslieferung erscheinen
+        // Karten oft erst nach der Erstenzeichnung, ein starrer Start nach 1,5 s lief
+        // dann ins Leere.
+        observeDom();
         setTimeout(() => {
-            log('Bereit. Strg+F8 = starten/stoppen, Strg+Shift+F8 = Cache + Zähler löschen.');
+            const menue = menueBefehle();
+            log('Bereit. Strg+F8 = starten/stoppen, Strg+Shift+F8 = Cache + Zähler löschen' +
+                (menue ? '; dasselbe im Tampermonkey-Menü und im Bedienfeld.' : ' (Menübefehle hier nicht verfügbar).'));
             processAll();
-            observeDom();
         }, 1500);
     }
 })();
