@@ -36,13 +36,17 @@
     'use strict';
 
     // ----------------------------- Konfiguration -----------------------------
-    const MAX_PER_DAY   = 600;    // geprüfte Anzeigen pro Kalenderdatum (Cache zählt nicht)
-    const CONCURRENCY   = 2;      // parallele Detail-Requests
-    const DELAY_MIN     = 600;    // ms Pause pro Worker zwischen Requests
-    const DELAY_MAX     = 1800;   // ms (zufällig, wirkt wie menschliches Tempo)
-    const FETCH_TIMEOUT = 15000;  // ms
-    const CACHE_TTL_DAYS = 7;     // Anzeige-Daten wiederverwenden
-    const COOLDOWN_MINUTES = 30;  // nach 403/429/429-Panic: nichts mehr laden
+    // Alle Betriebswerte in einem veränderlichen Objekt: Tests (und später ein
+    // Menüpunkt) können sie setzen, ohne den Wortlaut dieses Blocks zu kennen.
+    const CONFIG = {
+        MAX_PER_DAY: 600,        // geprüfte Anzeigen pro Kalenderdatum (Cache zählt nicht)
+        CONCURRENCY: 2,          // parallele Detail-Requests
+        DELAY_MIN: 600,          // ms Pause pro Worker zwischen Requests
+        DELAY_MAX: 1800,         // ms (zufällig, wirkt wie menschliches Tempo)
+        FETCH_TIMEOUT: 15000,    // ms
+        CACHE_TTL_DAYS: 7,       // Anzeige-Daten wiederverwenden
+        COOLDOWN_MINUTES: 30     // nach 403/429/Blockseite: nichts mehr laden
+    };
 
     const NS = 'kbs_v4_';
     const PREFIX = '[Verkäufer-Checker]';
@@ -96,7 +100,7 @@
         const c = getCache();
         c[k] = v;
         // Cache nebenbei von altem Ballast befreien
-        const cutoff = Date.now() - CACHE_TTL_DAYS * 864e5;
+        const cutoff = Date.now() - CONFIG.CACHE_TTL_DAYS * 864e5;
         for (const id of Object.keys(c)) {
             if (!c[id] || (c[id].ts || 0) < cutoff) delete c[id];
         }
@@ -105,7 +109,7 @@
     function clearCache()  { store(NS + 'cache', {}); }
 
     function cooldownUntil() { return Number(load(NS + 'cooldown', 0)) || 0; }
-    function setCooldown()   { store(NS + 'cooldown', Date.now() + COOLDOWN_MINUTES * 60000); }
+    function setCooldown()   { store(NS + 'cooldown', Date.now() + CONFIG.COOLDOWN_MINUTES * 60000); }
 
     // ------------------------------ Hilfsfunktionen ---------------------------
     const clean = s => (s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -291,7 +295,7 @@
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url,
-                    timeout: FETCH_TIMEOUT,
+                    timeout: CONFIG.FETCH_TIMEOUT,
                     headers: {
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                         'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
@@ -320,7 +324,7 @@
 
             // Fallback ohne GM-API: same-origin fetch genügt auf kleinanzeigen.de
             const ctrl = new AbortController();
-            const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
+            const timer = setTimeout(() => ctrl.abort(), CONFIG.FETCH_TIMEOUT);
             fetch(url, {
                 method: 'GET',
                 credentials: 'same-origin',
@@ -334,6 +338,29 @@
             }).catch(() => finish(null, 0))
               .finally(() => clearTimeout(timer));
         });
+    }
+
+    // Bot-Gegenwehr antwortet gelegentlich mit Status 200 und einer Hinweis-/Captcha-
+    // Seite. Erkennung nur, wenn die Seite keinerlei Profil-Container enthaelt: damit
+    // eine Anzeige, in deren Titel ein solcher Block-Begriff steht (z. B. ein
+    // „Roboter“-Staubsauger), nicht fälschlich einen Cooldown ausloest.
+    function looksLikeBlockPage(doc) {
+        if (doc.querySelector('#viewad-profile-box, #viewad-contact, [class*="userprofile"], .userbadge'))
+            return false;
+        const t = clean(doc.title).toLowerCase();
+        if (!t) return false;
+        return /captcha|verifizier|kein roboter|roboter\?|are you a (human|bot)|access denied|access to request|too many requests|temporarily blocked|sicherheitspr[üu]fung|sicherheit check/.test(t);
+    }
+
+    // Nur ein Befund mit mindestens einem belastbaren Signal darf wiederverwendet
+    // werden. Eine Seite ohne jedes Anzeichen eines Verkäufers ist kein Fund, sondern
+    // ein weicher Fehler (typisch: Bot-/Captcha-Seite mit Status 200).
+    function isUsable(d) {
+        if (!d) return false;
+        if (d.userId || d.name) return true;
+        if (d.badges && d.badges.length) return true;
+        if (typeof d.activeDays === 'number') return true;
+        return !!(d.satisfaction && d.satisfaction !== 'fehlt');
     }
 
     // ------------------------------- Anzeige ---------------------------------
@@ -393,11 +420,16 @@
     }
 
     function cardInfoHost(card) {
-        // Neue Oberfläche: rechte Spalte des Artikel-Containers
+        // Neue Oberfläche: die Spalte mit Titel/Preis, niemals die Bildspalte.
+        // Achtung: beide Spalten tragen `basis-*`-Klassen (gemessen an einer echten
+        // Suchseite: 27/27 Karten), die Bildspalte steht zuerst – ein pauschales
+        // /basis-/ Muster erwischt also immer das Thumbnail.
         const article = card.matches('article') ? card : card.querySelector('article[data-adid]');
         if (article) {
             const cols = Array.from(article.children).filter(el => el.tagName === 'DIV');
-            const col = cols.find(el => /basis-/.test(el.className)) || cols[cols.length - 1];
+            const heads = cols.filter(el => el.querySelector('h2, h3, [class*="headline"]'));
+            const col = heads.find(el => !el.querySelector('img')) || heads[0]
+                || cols.find(el => !el.querySelector('img')) || cols[cols.length - 1];
             if (col) return col;
             return article;
         }
@@ -424,8 +456,10 @@
         if (d.sustainability) infos.push(d.sustainability);
         if (d.type) infos.push(d.type);
         if (d.active) infos.push(d.active);
+        const fehlerText = typeof d.failStatus === 'number'
+            ? 'Detailseite nicht ladbar' : 'keine belastbaren Verkäuferdaten';
         chip.textContent = infos.length ? infos.join(' | ')
-            : (d.failed ? 'Detailseite nicht ladbar' : 'keine Bewertungen');
+            : (d.failed ? fehlerText : 'keine Bewertungen');
 
         const when = d.cached ? ' (aus Cache)' : '';
         chip.title = [
@@ -433,8 +467,9 @@
             d.name ? 'Verkäufer: ' + d.name : '',
             d.activeDays !== null ? 'Kontoalter: ' + d.activeDays + ' Tage' + when : 'Kontoalter unbekannt',
             d.badges.length ? 'Abzeichen: ' + d.badges.join(', ') : 'keine Abzeichen',
-            d.failed ? 'Detailseite konnte nicht geladen werden (HTTP ' + (d.failStatus || '?') +
-                ')\nErneut versuchen: Strg+F8' : ''
+            d.failed ? 'Fehlergrund: ' +
+                (typeof d.failStatus === 'number' ? 'HTTP ' + d.failStatus : d.failStatus) +
+                '\nErneut versuchen: Strg+F8' : ''
         ].filter(Boolean).join('\n');
 
         row.appendChild(chip);
@@ -487,22 +522,32 @@
 
     let running = false;
     let stopRequested = false;
-    const stats = { cached: 0, fetched: 0, failed: 0, blocked: 0 };
+    const stats = { cached: 0, fetched: 0, failed: 0, blocked: 0, error: 0, quotaSkip: 0 };
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const jitter = () => DELAY_MIN + Math.random() * (DELAY_MAX - DELAY_MIN);
+    const jitter = () => CONFIG.DELAY_MIN + Math.random() * (CONFIG.DELAY_MAX - CONFIG.DELAY_MIN);
 
     async function handleCard(card, index, total) {
         const adId = getAdId(card) || ('url_' + getDetailUrl(card));
         const cache = getCache();
         const hit = cache[adId];
-        if (hit && (Date.now() - (hit.ts || 0)) < CACHE_TTL_DAYS * 864e5) {
+        if (hit && (Date.now() - (hit.ts || 0)) < CONFIG.CACHE_TTL_DAYS * 864e5) {
             hit.data.cached = true;
             renderBadge(card, hit.data);
             stats.cached++;
             return;
         }
-        setStatus('Prüfe Verkäufer ' + (index + 1) + '/' + total + ' … (' + todayUsed() + '/' + MAX_PER_DAY + ')');
+        // Tageslimit bremst nur echte Anfragen - eine bereits gecachte Bewertung
+        // kostet nichts und muss deshalb auch bei vollem Zähler zu sehen sein.
+        if (todayUsed() >= CONFIG.MAX_PER_DAY) {
+            stats.quotaSkip++;
+            return;
+        }
+        setStatus('Prüfe Verkäufer ' + (index + 1) + '/' + total + ' … (' + todayUsed() + '/' + CONFIG.MAX_PER_DAY + ')');
+        // Der Zähler läuft vor der Anfrage und zählt den Versuch, nicht den Erfolg:
+        // sonst schützt das Tageslimit nicht vor einer Endlosschleife fehlgeschlagener
+        // Abrufe, und die Prüfung könnte von beiden Workern gleichzeitig passiert werden.
+        bumpToday();
         const { doc, status } = await httpGetDoc(getDetailUrl(card), location.href);
 
         if (status === 403 || status === 429) {
@@ -511,7 +556,7 @@
             stopRequested = true;
             warn('HTTP', status, '- Bot-Gegenwehr getroffen. Cooldown bis',
                 new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
-            setStatus('Blockiert (HTTP ' + status + ') – ' + COOLDOWN_MINUTES +
+            setStatus('Blockiert (HTTP ' + status + ') – ' + CONFIG.COOLDOWN_MINUTES +
                 ' Min Pause. Ctrl+F8 zum frühen Neustart.');
             return;
         }
@@ -527,13 +572,33 @@
             return;
         }
 
-        bumpToday();
         stats.fetched++;
         const data = extractSeller(doc);
-        putCache(adId, { ts: Date.now(), data });
+        if (!isUsable(data)) {
+            // Wie eine Bot-Gegenwehr aussehen: nicht weiterladen, sondern eine Pause einlegen.
+            if (looksLikeBlockPage(doc)) {
+                setCooldown();
+                stats.blocked++;
+                stopRequested = true;
+                warn('Bot-Gegenwehr mit Status 200 erkannt. Cooldown bis',
+                    new Date(cooldownUntil()).toLocaleTimeString('de-DE'));
+                setStatus('Blockiert (Seite verlangt eine Bestätigung) – ' + CONFIG.COOLDOWN_MINUTES +
+                    ' Min Pause. Ctrl+F8 zum frühen Neustart.');
+                return;
+            }
+            // Ein leeres Ergebnis wird nicht gecacht: sonst bliebe die Karte bis zum
+            // Ablauf der TTL (sieben Tage) auf “unbekannt” stehen, obwohl erneut
+            // geladen werden könnte.
+            stats.failed++;
+            data.failed = true;
+            data.failStatus = 'keine Verkäuferdaten';
+            warn('Keine Verkäuferdaten erkannt:', getDetailUrl(card));
+        } else {
+            putCache(adId, { ts: Date.now(), data });
+        }
         renderBadge(card, data);
         log('✓', adId, data.rating, '|', data.type || '?', '|', data.satisfaction,
-            '|', data.active || 'kein Datum', '|', todayUsed() + '/' + MAX_PER_DAY);
+            '|', data.active || 'kein Datum', '|', todayUsed() + '/' + CONFIG.MAX_PER_DAY);
     }
 
     function looksLikeListing(force) {
@@ -563,40 +628,50 @@
             }
             return;
         }
-        if (todayUsed() >= MAX_PER_DAY) {
-            setStatus('Tageslimit (' + MAX_PER_DAY + ') erreicht. Ctrl+Shift+F8 löscht den Zähler.');
-            return;
+        if (todayUsed() >= CONFIG.MAX_PER_DAY) {
+            warn('Tageslimit (' + CONFIG.MAX_PER_DAY + ') erreicht - gezeigt wird, was bereits gecacht ist.');
+            setStatus('Tageslimit (' + CONFIG.MAX_PER_DAY + ') erreicht: gecacht angezeigte Bewertungen, '
+                + 'neue Detailseiten erst nach Reset. Ctrl+Shift+F8 löscht den Zähler.');
         }
 
         running = true;
         stopRequested = false;
         Object.keys(stats).forEach(k => stats[k] = 0);
-        log('Verarbeite', cards.length, 'Anzeigen (Tageslimit', MAX_PER_DAY +
+        log('Verarbeite', cards.length, 'Anzeigen (Tageslimit', CONFIG.MAX_PER_DAY +
             ', bereits genutzt', todayUsed() + ')');
 
         let i = 0;
         const worker = async () => {
             while (!stopRequested) {
                 if (i >= cards.length) return;
-                if (todayUsed() >= MAX_PER_DAY) {
-                    setStatus('Tageslimit (' + MAX_PER_DAY + ') erreicht. Ctrl+Shift+F8 = Reset.');
-                    return;
-                }
                 const idx = i++;
-                await handleCard(cards[idx], idx, cards.length);
+                try {
+                    await handleCard(cards[idx], idx, cards.length);
+                } catch (e) {
+                    // Eine einzelne kaputte Karte (fremdes Markup, unerwartetes
+                    // Ergebnis) darf weder die anderen Karten aufhalten noch den
+                    // Lauf in der running-Falle belassen.
+                    stats.error++;
+                    warn('Karte', idx + 1, 'schlug fehl:', e);
+                }
                 if (i < cards.length) await sleep(jitter());
             }
         };
 
-        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, cards.length) }, worker));
-        running = false;
+        try {
+            await Promise.all(Array.from({ length: Math.min(CONFIG.CONCURRENCY, cards.length) }, worker));
+        } finally {
+            running = false;
+        }
 
         const hinweise = [];
         if (stats.cached) hinweise.push(stats.cached + ' aus Cache');
         if (stats.failed) hinweise.push(stats.failed + ' Fehler (Strg+F8 = erneut)');
+        if (stats.error) hinweise.push(stats.error + ' Karte mit Ausnahmefehler (Strg+F8 = erneut)');
         if (stats.blocked) hinweise.push(stats.blocked + ' blockiert');
+        if (stats.quotaSkip) hinweise.push(stats.quotaSkip + ' ohne Anfrage (Tageslimit)');
         setStatus('Fertig: ' + cards.length + ' Karten · ' + stats.fetched + ' neue Anfragen · ' +
-            todayUsed() + '/' + MAX_PER_DAY + ' heute' +
+            todayUsed() + '/' + CONFIG.MAX_PER_DAY + ' heute' +
             (hinweise.length ? ' · ' + hinweise.join(' · ') : ''));
         setTimeout(() => setStatus(''), 10000);
     }
@@ -640,6 +715,7 @@
     // Debug-/Pflegemöglichkeit für Tests (kein Einfluss auf den Betrieb)
     try {
         window.kbsDebug = {
+            config: CONFIG,
             extractSeller, computeRating, collectCards, renderBadge, looksLikeListing,
             getDetailUrl, getAdId, formatActive, parseGermanDate, daysSince,
             clearCache, processAll, stop, stats

@@ -11,16 +11,15 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 
 const LISTING_URL = 'https://www.kleinanzeigen.de/s-fahrraeder/fahrrad/k0c217';
 
+// Betriebswerte für den Testlauf: kurz, aber unterscheidbar von den
+// Produktionswerten. Früher wurde dafür der Konfigurationsblock des Skripts per
+// Regex wegpatcht - wer die Zeilen umformulierte, bekam einen stillen No-op und
+// damit langsame, flatternde Tests. Heute wird über window.kbsDebug.config
+// gesetzt, und der Helfer bricht ab, wenn diese Übergabe nicht existiert.
+const TEST_CONFIG = { DELAY_MIN: 1, DELAY_MAX: 2, FETCH_TIMEOUT: 900 };
+
 function fixture(name) {
     return fs.readFileSync(path.join(FIXTURES, name), 'utf8');
-}
-
-// Schnelle, deterministische Variante des Skripts (keine Wartezeiten).
-function fastScript(code) {
-    return code.replace(
-        /const DELAY_MIN[\s\S]*?const COOLDOWN_MINUTES = \d+;/,
-        'const DELAY_MIN = 1, DELAY_MAX = 2, FETCH_TIMEOUT = 900, CACHE_TTL_DAYS = 7, COOLDOWN_MINUTES = 30;'
-    );
 }
 
 function loadWindow(html, opts = {}) {
@@ -49,8 +48,13 @@ function loadWindow(html, opts = {}) {
         };
     }
 
-    win.eval(fastScript(fs.readFileSync(SCRIPT, 'utf8')));
+    win.eval(fs.readFileSync(SCRIPT, 'utf8'));
     if (!win.kbsDebug) throw new Error('window.kbsDebug fehlt – Skript bricht ab');
+    if (!win.kbsDebug.config) {
+        throw new Error('window.kbsDebug.config fehlt – Testbetrieb kann die ' +
+            'Betriebswerte nicht setzen (Konfiguration im Skript als Objekt führen)');
+    }
+    Object.assign(win.kbsDebug.config, TEST_CONFIG, opts.config || {});
     return win;
 }
 
@@ -59,4 +63,4 @@ async function runProcessAll(win, force) {
     await win.kbsDebug.processAll(force);
 }
 
-module.exports = { loadWindow, fixture, LISTING_URL, runProcessAll, SCRIPT, mem: w => w.kbsMem };
+module.exports = { loadWindow, fixture, LISTING_URL, runProcessAll, SCRIPT, TEST_CONFIG, mem: w => w.kbsMem };

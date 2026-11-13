@@ -32,9 +32,39 @@ test('Badge-Einfügung in rechter Spalte bzw. altem Fußbereich', () => {
     assert.ok(info, 'Info-Zeile vorhanden');
     assert.equal(info.className, 'kbs-info kbs-gut');
     assert.match(info.querySelector('.kbs-chip').textContent, /TOP \| besonders zuverlässig \| besonders freundlich \| Gewerblich/);
-    // Einfügung in der Textspalte (div mit basis-...), nicht im Bilderbereich
-    assert.ok(info.parentElement.className.includes('basis-'));
+    // Einfügung in der Textspalte. Die Bildspalte trägt ebensolche basis-*-Klassen
+    // (gemessen an einer echten Suchseite: beide Spalten), ein Klassen-Test allein
+    // wäre wirkungslos - deshalb wird der Host gegen Bild und Titel geprüft.
+    assert.ok(info.parentElement.className.includes('basis-'), 'Textspalte trägt basis-*-Klasse');
+    assert.ok(!info.parentElement.querySelector('img'), 'Host ist nicht die Bildspalte');
+    assert.ok(info.parentElement.querySelector('h3'), 'Host enthält den Anzeigentitel');
     assert.ok(cards[0].classList.contains('kbs-card') && cards[0].classList.contains('kbs-gut'));
+});
+
+test('Host-Wahl: zwei basis-*-Spalten (Bild zuerst) und ohne Titel-Spalte', () => {
+    const zweiSpalten = `<html><body><ul id="srchrslt-adtable">
+      <li data-clickable="card"><article data-adid="11111111"
+            data-href="/s-anzeige/x/11111111-217-7939">
+        <div class="relative z-raised basis-[200px]"><a href="/s-anzeige/x/11111111-217-7939"><img src="a.png"></a></div>
+        <div class="z-raised grow basis-[398px] flex-col"><h3>Titel</h3><p>12 €</p></div>
+      </article></li></ul></body></html>`;
+    const win1 = loadWindow(zweiSpalten);
+    const [karte1] = win1.kbsDebug.collectCards(false);
+    const ohneBewertung = { rating: 'gut', satisfaction: 'fehlt', badges: [], activeDays: null,
+        active: '', type: '', name: '', reliability: false, friendliness: false, sustainability: '' };
+    win1.kbsDebug.renderBadge(karte1, ohneBewertung);
+    const host1 = karte1.querySelector('.kbs-info').parentElement;
+    assert.ok(!host1.querySelector('img'), 'Bildspalte wird nicht benutzt');
+    assert.match(host1.className, /flex-col/, 'Titel-/Preisspalte wird benutzt');
+
+    // Fallback: keine Spalte mit Titel -> eine ohne Bild, nicht die erste Spalte
+    const ohneTitel = zweiSpalten.replace('<h3>Titel</h3>', '<span>Titel</span>');
+    const win2 = loadWindow(ohneTitel);
+    const [karte2] = win2.kbsDebug.collectCards(false);
+    win2.kbsDebug.renderBadge(karte2, ohneBewertung);
+    const host2 = karte2.querySelector('.kbs-info').parentElement;
+    assert.ok(!host2.querySelector('img'), 'Fallback wählt eine Spalte ohne Bild');
+    assert.match(host2.className, /basis-\[398px\]/, 'Fallback wählt die rechte Spalte');
 });
 
 test('Detailseite: voller Badge-Satz (Gewerblich)', () => {
