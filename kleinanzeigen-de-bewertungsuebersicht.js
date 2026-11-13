@@ -411,13 +411,14 @@
                     method: 'GET',
                     url,
                     timeout: CONFIG.FETCH_TIMEOUT,
+                    // Nur was nachweislich ankommt: `referer` und `user-agent` nennt die
+                    // Tampermonkey-Doku als setzbare Header (auf Safari und Android-Browsern
+                    // teils eingeschränkt). `Sec-Fetch-*` sind verbotene Request-Header und
+                    // werden vom Browser übernommen, nicht vom Skript - hier also weggelassen.
                     headers: {
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                         'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-                        'Referer': referer || location.href,
-                        'Sec-Fetch-Dest': 'document',
-                        'Sec-Fetch-Mode': 'navigate',
-                        'Sec-Fetch-Site': 'same-origin'
+                        'referer': referer || location.href
                     },
                     onload: r => {
                         if (r.status === 200) {
