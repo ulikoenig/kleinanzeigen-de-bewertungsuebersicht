@@ -45,7 +45,7 @@ function vergleiche() {
 if (require.main === module) {
     try {
         const pruefen = process.argv.includes('--check');
-        const { erzeugt, vorhanden, gleich } = vergleiche();
+        const { erzeugt, gleich } = vergleiche();
         if (pruefen) {
             if (gleich) {
                 console.log(`${ZIEL} stimmt mit ${QUELLE} überein.`);

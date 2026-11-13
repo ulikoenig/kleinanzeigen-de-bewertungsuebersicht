@@ -13,6 +13,7 @@
     "test:quelle": "KBS_VARIANT=quelle node --test test/*.test.js"
   },
   "devDependencies": {
+    "eslint": "^9.39.5",
     "jsdom": "^26.0.0"
   }
 }

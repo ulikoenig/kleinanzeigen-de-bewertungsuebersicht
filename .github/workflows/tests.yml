@@ -1,0 +1,21 @@
+name: Tests und Lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pruefung:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # Der Build prüft mit, ob die installierbare Datei noch zur Quelle passt
+      - run: npm run check
+      - run: npm run lint
+      # npm test läuft gegen beide Ausprägungen (ableitung + quelle)
+      - run: npm test
