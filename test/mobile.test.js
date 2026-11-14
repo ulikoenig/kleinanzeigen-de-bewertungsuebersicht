@@ -164,3 +164,32 @@ test('Mobil: Detailseiten werden mit Desktop-Kopf angefragt, damit das Kontoalte
     assert.equal(desktop.requestOptionen[0].headers['user-agent'], undefined,
         'desktop-ausgelieferte Seiten behalten ihren Kopf');
 });
+
+test('Bedienfeld bleibt erhalten, wenn die Statusmeldung verblasst', async () => {
+    const win = loadWindow(fixture('mobile-listing.html'), {
+        respond: () => ({ status: 200, html: fixture('mobile-anzeige.html') })
+    });
+    await runProcessAll(win, false);
+    assert.equal(win.document.querySelectorAll('#kbs-status .kbs-knopf').length, 3,
+        'während und nach der Abarbeitung drei Knöpfe da sind');
+
+    // Die automatische Klarmeldung nach der Statistik darf das Bedienfeld nicht entfernen
+    win.kbsDebug.setStatus('');
+    const feld = win.document.querySelector('#kbs-status .kbs-aktionen');
+    assert.ok(feld, 'Bedienfeld ist noch im Dokument');
+    assert.equal(feld.querySelectorAll('button.kbs-knopf').length, 3, 'alle drei Knöpfe anklickbar');
+    assert.equal(win.document.querySelector('#kbs-status .kbs-text').textContent, '',
+        'nur der Text ist weg');
+});
+
+test('Statusleiste liegt nicht in der Navigationskante des Geräts', async () => {
+    const win = loadWindow(fixture('mobile-listing.html'), {
+        respond: () => ({ status: 200, html: fixture('mobile-anzeige.html') })
+    });
+    await runProcessAll(win, false);
+    const css = win.document.getElementById('kbs-style').textContent;
+    assert.match(css, /bottom: calc\(20px \+ env\(safe-area-inset-bottom/,
+        'Grundabstand inklusive Sicherheitsbereich');
+    assert.match(css, /@media \(max-width: 720px\)[\s\S]{0,80}#kbs-status \{ bottom: calc\(28px/,
+        'auf schmalen Geräten zusätzlicher Abstand');
+});

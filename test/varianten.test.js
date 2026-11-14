@@ -73,5 +73,8 @@ test('Der UserScript-Kopf ist unverändert gültig (Grant-Namen, Version)', () =
     // Versionsangabe in Skript und Paketmustek stimmen überein
     const skriptVersion = (kopf.match(/^\/\/ @version\s+(\S+)\s*$/m) || [])[1];
     const paket = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-    assert.equal(paket.version, skriptVersion + '.0', 'package.json und @version laufen auseinander');
+    // "@version 4.1" und package.json "4.1.0" sind dieselbe Ansage; dreistellig muss sie
+    // in beiden übereinstimmen.
+    const zuVergleichen = skriptVersion.split('.').length === 2 ? skriptVersion + '.0' : skriptVersion;
+    assert.equal(paket.version, zuVergleichen, 'package.json und @version laufen auseinander');
 });

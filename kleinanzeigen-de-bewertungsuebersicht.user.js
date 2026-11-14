@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kleinanzeigen Verkäufer-Bewertungen in Suchergebnissen anzeigen
 // @namespace    http://tampermonkey.net/
-// @version      4.1
+// @version      4.1.1
 // @description  Zeigt in der Suchübersicht Account-Alter und Bewertungen der Nutzer direkt unter den Suchergebnissen an.
 // @author       Uli König
 // @match        https://www.kleinanzeigen.de/*
@@ -19,6 +19,18 @@
 
 /*
  * Änderungsprotokoll
+ * 4.1.1  Zwei Befunde von der Geräteprüfung (Galaxy S21 Ultra, Android 15,
+ *        Firefox 157.0.1, Tampermonkey 5.5.0):
+ *        - Das Touch-Bedienfeld verschwand mit der Statusmeldung und war nach dem
+ *          ersten Durchlauf nicht mehr erreichbar. Jetzt bleibt es stehen, nur der
+ *          Text verblasst.
+ *        - Die Leiste klebte an der Unterkante; auf Geräten mit Wischgeste landet
+ *          die Berührung in der Navigation. Abstand auf 20 px plus Sicherheitsbereich
+ *          (auf schmalen Bildschirmen 28 px) gehoben.
+ *        Zusätzlich: Detailseiten werden im Mobilbetrieb über den Manager mit
+ *        Desktop-Kopf angefragt (auf dem Gerät nachgewiesen: dadurch ist das
+ *        Kontoalter auch auf dem Handy verfügbar), und ein Test wacht über die
+ *        @grant-Namen und die Versionsangabe.
  * 4.1  Behobene Befunde aus dem Codereview (Auswahl, Aufgaben-IDs in TODO.md):
  *      - Bewertung sitzt wieder in der Titel-/Preisspalte (zuvor 27/27 Karten in
  *        der Bildspalte, weil beide Spalten basis-*-Klassen tragen).
@@ -619,14 +631,23 @@
             li.kbs-card.kbs-mittel:hover   { --kbs-bg:#fff3cd44; }
             li.kbs-card.kbs-schlecht:hover { --kbs-bg:#f8d7da44; }
             #kbs-status {
-                position: fixed; left: 12px; bottom: 12px; z-index: 2147483647;
+                position: fixed; left: 12px; z-index: 2147483647;
+                /* Nicht direkt an der Unterkante: auf Geräten mit Wischgeste
+                   (Android) landen Berührungen sonst in der Navigationsleiste -
+                   auf dem Gerät so passiert. Sichere Abstände respektieren. */
+                bottom: calc(20px + env(safe-area-inset-bottom, 0px));
                 background: #222; color: #fff; font: 12px/1.5 system-ui, sans-serif;
                 padding: 6px 10px; border-radius: 6px; opacity: .9;
                 display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
                 max-width: calc(100vw - 24px);
             }
+            @media (max-width: 720px) {
+                #kbs-status { bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
+            }
             #kbs-status .kbs-text { flex: 1 1 auto; }
-            #kbs-status .kbs-aktionen { display: flex; gap: 6px; flex: 0 0 auto; }
+            #kbs-status .kbs-text:empty { display: none; }
+            #kbs-status .kbs-aktionen { display: flex; gap: 6px; flex: 0 0 auto; align-items: center; }
+            #kbs-status .kbs_label { color: #bbb; font-size: 11px; }
             #kbs-status .kbs-knopf {
                 font: 12px/1.2 system-ui, sans-serif; color: #fff;
                 background: #444; border: 1px solid #777; border-radius: 5px;
@@ -650,7 +671,10 @@
     function setStatus(msg, bleibt) {
         if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
         if (!msg) {
-            if (statusEl) { statusEl.remove(); statusEl = null; }
+            // Nur der Text verschwindet: das Bedienfeld (Prüfen / Stopp / Zurücksetzen)
+            // bleibt, sonst ist auf dem Handy nach dem ersten Durchlauf nichts mehr
+            // anklickbar - auf dem Gerät so gemessen.
+            if (statusEl) statusEl.querySelector('.kbs-text').textContent = '';
             return;
         }
         if (!statusEl) {
@@ -692,6 +716,10 @@
             b.addEventListener('click', ev => { ev.preventDefault(); handler(); });
             feld.appendChild(b);
         };
+        const hinweis = document.createElement('span');
+        hinweis.className = 'kbs-_label';
+        hinweis.textContent = 'Bewertungen:';
+        feld.appendChild(hinweis);
         knopf('Prüfen', 'Verkäuferbewertungen jetzt prüfen (auch fehlgeschlagene Karten)', () => processAll(true));
         knopf('Stopp', 'Abarbeitung anhalten', stop);
         knopf('Zurücksetzen', 'Cache und Tageszähler löschen', zuruecksetzen);
@@ -1186,7 +1214,8 @@
             extractSeller, computeRating, collectCards, renderBadge, looksLikeListing,
             getDetailUrl, getAdId, artikelElement, schreibeCache,
             formatActive, parseGermanDate, daysSince, datumDe,
-            clearCache, processAll, stop, stats, zuruecksetzen, steuerungEinblenden, menueBefehle,
+            clearCache, processAll, stop, stats, zuruecksetzen, steuerungEinblenden,
+            menueBefehle, setStatus,
             gerateEinstellungen, mobilerBetrieb, debugFreigegeben
         };
       } catch { /* egal */ }
