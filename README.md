@@ -95,6 +95,16 @@ Rückfall ab 8 s. „Zurücksetzen“ fängt das wieder ein.
 | `kleinanzeigen-de-bewertungsuebersicht.user.js` | installierbare Fassung, erzeugt (`npm run build`), enthält `@downloadURL`/`@updateURL` |
 | `build.js` | erzeugt bzw. prüft die abgeleitete Datei (`npm run check`) |
 | `LICENSE` | GPL-3.0-or-later Volltext |
+| `.github/workflows/tests.yml` | Prüfung bei Push und Pull-Request: Build-Konsistenz, Lint, beide Testläufe |
+
+## Veröffentlichen
+
+Auf `main` im Repository liegt die Quelle; die Fassung bei Greasyfork wird aus dem
+GitHub-Stand gespiegelt. Nach dem Pushen muss Greasyfork den Stand abholen (eigener
+Abgleich im Skript-Cockpit oder der turnusmäßigen Prüfung) – erst dann melden sich
+Installationen mit der neuen Version. Der Abgleich selbst ist auf dem Gerät
+nachgewiesen: Tampermonkey zeigte „Aktualisierung des Userscripts“ mit Versionsvergleich
+(v4.1 → v4.1.1) und spielte das Update ein.
 
 ```bash
 npm install          # jsdom und ESLint (Entwickabhängigkeiten)
