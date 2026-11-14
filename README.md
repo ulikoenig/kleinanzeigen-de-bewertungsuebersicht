@@ -137,6 +137,34 @@ Konsole des Skript-Editors – in der normalen Seitenkonsole ist das Skriptobjek
 der Sandbox nicht sichtbar). Nützlich: `kbsDebug.collectCards()`,
 `kbsDebug.extractSeller(dokument)`, `kbsDebug.stats`.
 
+## Prüfen am echten Android-Gerät (adb)
+
+Der Mobilbetrieb wurde an einem echten Gerät gemessen (Galaxy S21 Ultra, Android 15,
+Firefox 157.0.1, Tampermonkey 5.5.0). So lässt sich das wiederholen:
+
+```bash
+adb devices                                   # Gerät sichtbar?
+adb reverse tcp:8765 tcp:8765                 # Handy erreicht den Rechner als localhost
+python3 -m http.server 8765 &                 # oder ein kleiner Prüfservice wie unten
+adb shell am start -n org.mozilla.firefox/org.mozilla.fenix.IntentReceiverActivity \
+  -a android.intent.action.VIEW -c android.intent.category.BROWSABLE \
+  -d "http://localhost:8765/<pruefaufbau>.html"
+adb shell uiautomator dump /sdcard/wurf.xml && adb shell cat /sdcard/wurf.xml
+```
+
+Im Zugbaum (`uiautomator dump`) stehen die eingefügten Zeilen als Textknoten –
+`✓ gut`, `! mittel`, `✕ schlecht`, `? unbekannt`, die Chip-Texte und die
+Bedienfeldknöpfe als `android.widget.Button`. Damit lassen sich Einfügeort,
+Überlappung und Berührungsgröße prüfen; die `bounds` sind Physikalische Pixel
+(geteilt durch `wm density / 160` = CSS-Pixel).
+
+Beachtenswertes vom letzten Lauf: die App-Weiterleitungsabfrage
+(„Diesen Link mit der Kleinanzeigen-App öffnen?“) muss mit **In Firefox bleiben**
+weggetippt werden, die Statusleiste liegt bewusst nicht an der Unterkante
+(Wischgeste!), und ein installiertes Skript wird über eine eigene URL mit
+Versionswechsel aktualisiert („Aktualisierung des Userscripts“ – derselbe Mechanismus
+wie bei Greasyfork).
+
 ## Lizenz
 
 GPL-3.0-or-later, Volltext in [`LICENSE`](LICENSE).
